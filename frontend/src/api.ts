@@ -54,6 +54,9 @@ export const api = {
   addVaccination: (petId: string, input: VaccinationInput) => request<Vaccination>(`/api/v1/pets/${petId}/vaccinations`, { method: "POST", body: JSON.stringify(input) }),
   petMedications: (petId: string) => request<PetMedicationPage>(`/api/v1/pets/${petId}/medications?limit=100`),
   addPetMedication: (petId: string, input: PetMedicationInput) => request<PetMedication>(`/api/v1/pets/${petId}/medications`, { method: "POST", body: JSON.stringify(input) }),
+  medicationRestockPreview:(petId:string,medicationId:string)=>request<MedicationRestockPreview>(`/api/v1/pets/${encodeURIComponent(petId)}/medications/${encodeURIComponent(medicationId)}/restock-preview`),
+  createMedicationShoppingItem:(petId:string,medicationId:string,listId:string)=>request<ShoppingItem>(`/api/v1/pets/${encodeURIComponent(petId)}/medications/${encodeURIComponent(medicationId)}/shopping-item`,{method:"POST",body:JSON.stringify({listId})}),
+  updateMedicationStock:(petId:string,medicationId:string,stockQuantity:string)=>request<PetMedication>(`/api/v1/pets/${encodeURIComponent(petId)}/medications/${encodeURIComponent(medicationId)}/stock`,{method:"PUT",body:JSON.stringify({stockQuantity})}),
   petDocuments: (petId: string) => request<{ documents: PetDocument[] }>(`/api/v1/pets/${encodeURIComponent(petId)}/documents?limit=100`),
   uploadPetDocument: (petId: string, data: FormData) => request<PetDocument>(`/api/v1/pets/${encodeURIComponent(petId)}/documents`, { method: "POST", body: data }),
   petWeights: (petId:string) => request<{weights:WeightEntry[]}>(`/api/v1/pets/${encodeURIComponent(petId)}/weights?limit=100`),
@@ -61,7 +64,11 @@ export const api = {
   petLabResults: (petId:string) => request<{labResults:LabResult[]}>(`/api/v1/pets/${encodeURIComponent(petId)}/lab-results?limit=100`),
   addPetLabResult: (petId:string,input:LabResultInput) => request<LabResult>(`/api/v1/pets/${encodeURIComponent(petId)}/lab-results`,{method:"POST",body:JSON.stringify(input)}),
   reminders: (until:string) => request<{reminders:Reminder[]}>(`/api/v1/reminders?until=${encodeURIComponent(until)}&limit=100`),
+  reminderRules: () => request<ReminderRules>("/api/v1/reminder-rules"),
+  saveReminderRules: (input:ReminderRules) => request<ReminderRules>("/api/v1/reminder-rules",{method:"PUT",body:JSON.stringify(input)}),
+  createReminderAppointment: (sourceId:string,input:ReminderAppointmentInput) => request<CalendarEvent>(`/api/v1/reminders/vaccinations/${encodeURIComponent(sourceId)}/appointment`,{method:"POST",body:JSON.stringify(input)}),
   petDashboard: (petId:string,month:string) => request<PetDashboard>(`/api/v1/pets/${encodeURIComponent(petId)}/dashboard?month=${encodeURIComponent(month)}`),
+  petTimeline: (petId:string,cursor="") => request<PetTimelinePage>(`/api/v1/pets/${encodeURIComponent(petId)}/timeline?limit=30${cursor?`&cursor=${encodeURIComponent(cursor)}`:""}`),
   documentLinks: (petId:string,documentId:string) => request<RelationshipSet>(`/api/v1/pets/${encodeURIComponent(petId)}/documents/${encodeURIComponent(documentId)}/links`),
   saveDocumentLinks: (petId:string,documentId:string,input:RelationshipSet) => request<RelationshipSet>(`/api/v1/pets/${encodeURIComponent(petId)}/documents/${encodeURIComponent(documentId)}/links`,{method:"PUT",body:JSON.stringify(input)}),
   expenseLinks: (expenseId:string) => request<RelationshipSet>(`/api/v1/expenses/${encodeURIComponent(expenseId)}/pet-links`),
@@ -77,8 +84,8 @@ export const petDocumentContentPath = (petId: string, documentId: string) =>
   `/api/v1/pets/${encodeURIComponent(petId)}/documents/${encodeURIComponent(documentId)}/content`;
 
 export type ShoppingList = { id:string;name:string;visibility:"shared"|"private" };
-export type ShoppingItem = { id: string; name: string; quantity: string; unit?: string; category?: string; priority: string; completed: boolean; petIds:string[] };
-export type ShoppingInput = { listId: string; name: string; quantity: string; unit: string; category: string; note: string; priority: string; store: string; petIds:string[] };
+export type ShoppingItem = { id: string; name: string; quantity: string; unit?: string; category?: string; priority: string; completed: boolean; petIds:string[];preferredBrand?:string;estimatedPriceCents?:number;estimatedPriceCurrency:string;recurring:boolean };
+export type ShoppingInput = { listId: string; name: string; quantity: string; unit: string; category: string; note: string; priority: string; store: string; petIds:string[];preferredBrand:string;estimatedPriceCents?:number;estimatedPriceCurrency:string;recurring:boolean };
 export type Expense = { id: string; description: string; merchant?: string; plannedAmountCents: number; actualAmountCents?: number; currency: string; dueDate: string; category?: string; status: string; petId?: string; budgetCategory?: string };
 export type ExpenseInput = { description: string; merchant: string; plannedAmountCents: number; currency: string; dueDate: string; category: string; recurrenceRule: string; status: string; paymentMethod: string; notes: string; petId?: string; budgetCategory?: string };
 export type Receipt = { id: string; expenseId: string; originalFilename: string; mimeType: string; sha256: string; uploadedAt: string; merchant?: string; totalAmountCents?: number; currency: string };
@@ -86,9 +93,9 @@ export type AppointmentType = "veterinarian" | "vaccination" | "medication" | "g
 export type CalendarEvent = { id: string; title: string; description?: string; startsAt: string; endsAt: string; allDay: boolean; category?: string; ownerId: string; visibility: "shared" | "private"; recurrenceRule?: string; reminderMinutes?: number; status: "planned" | "completed" | "cancelled"; petId?: string; appointmentType?: AppointmentType };
 export type CalendarEventInput = { title: string; description?: string; startsAt: string; endsAt: string; allDay?: boolean; category?: string; visibility?: "shared" | "private"; recurrenceRule?: string; reminderMinutes?: number; status?: "planned" | "completed" | "cancelled"; petId?: string; appointmentType?: AppointmentType };
 export type ExpenseSummary = { month: string; plannedAmountCents: number; actualAmountCents: number; openAmountCents: number; planActualDeltaCents: number };
-export type PetBudgetInput = { month:string;category:string;amountCents:number;currency:string };
+export type PetBudgetInput = { month:string;category:string;amountCents:number;currency:string;warningThresholdCents?:number;notes?:string };
 export type PetBudget = PetBudgetInput & { id:string;petId:string;updatedAt:string };
-export type PetExpenseCategorySummary = { category:string;plannedAmountCents:number;actualAmountCents:number;budgetAmountCents:number };
+export type PetExpenseCategorySummary = { category:string;plannedAmountCents:number;actualAmountCents:number;budgetAmountCents:number;warningThresholdCents?:number;remainingBudgetCents:number;warningThresholdReached:boolean };
 export type PetExpenseSummary = { petId:string;period:string;categories:PetExpenseCategorySummary[] };
 export type Pet = { id: string; name: string; species: string; breed?: string; birthDate?: string; approximateBirthDate: boolean; sex: "female" | "male" | "unknown"; microchipNumber?: string; color?: string; insurance?: string; insuranceNumber?: string; veterinarian?: string; notes?: string; active: boolean; createdAt: string; updatedAt: string };
 export type PetInput = { name: string; species: string; breed?: string; birthDate?: string; approximateBirthDate?: boolean; sex?: "female" | "male" | "unknown"; microchipNumber?: string; color?: string; insurance?: string; insuranceNumber?: string; veterinarian?: string; notes?: string; active?: boolean };
@@ -100,14 +107,19 @@ export type MedicalRecordPage = { records: MedicalRecord[]; nextCursor?: string 
 export type Vaccination = { id: string; petId: string; vaccineName: string; manufacturer?: string; diseases: string[]; administeredOn: string; validUntil?: string; nextDueDate?: string; documentId?: string; veterinarian?: string; batchNumber?: string; notes?: string; createdAt: string; updatedAt: string };
 export type VaccinationInput = { vaccineName: string; manufacturer?: string; diseases?: string[]; administeredOn: string; validUntil?: string; nextDueDate?: string; documentId?: string; veterinarian?: string; batchNumber?: string; notes?: string };
 export type VaccinationPage = { vaccinations: Vaccination[]; nextCursor?: string };
-export type PetMedication = { id:string;petId:string;medicationId:string;name:string;activeIngredient?:string;dosageForm?:string;doseText:string;frequencyText:string;startsOn:string;endsOn?:string;stockQuantity:string;stockUnit?:string;notes?:string;active:boolean;createdAt:string;updatedAt:string };
-export type PetMedicationInput = { name:string;activeIngredient?:string;dosageForm?:string;doseText:string;frequencyText:string;startsOn:string;endsOn?:string;stockQuantity:string;stockUnit?:string;notes?:string;active?:boolean };
+export type PetMedication = { id:string;petId:string;medicationId:string;name:string;activeIngredient?:string;dosageForm?:string;doseText:string;frequencyText:string;startsOn:string;endsOn?:string;stockQuantity:string;stockUnit?:string;packageSize?:string;minimumStock?:string;purchasedOn?:string;expiresOn?:string;notes?:string;active:boolean;createdAt:string;updatedAt:string };
+export type PetMedicationInput = { name:string;activeIngredient?:string;dosageForm?:string;doseText:string;frequencyText:string;startsOn:string;endsOn?:string;stockQuantity:string;stockUnit?:string;packageSize?:string;minimumStock?:string;purchasedOn?:string;expiresOn?:string;notes?:string;active?:boolean };
 export type PetMedicationPage = { medications:PetMedication[] };
+export type MedicationRestockPreview={petId:string;medicationId:string;name:string;stockQuantity:string;minimumStock:string;stockUnit:string;packageSize?:string};
 export type PetDocument = { id:string;petId:string;title:string;documentType:"report"|"lab"|"vaccination"|"imaging"|"insurance"|"other";occurredOn?:string;notes?:string;originalFilename:string;mimeType:string;sha256:string;uploadedBy:string;uploadedAt:string };
 export type WeightEntry={id:string;petId:string;measuredOn:string;weightKg:string;notes?:string;createdAt:string};
 export type WeightInput={measuredOn:string;weightKg:string;notes:string};
 export type LabResult={id:string;petId:string;measuredOn:string;testName:string;value:string;unit?:string;referenceLow?:string;referenceHigh?:string;notes?:string;createdAt:string};
 export type LabResultInput={measuredOn:string;testName:string;value:string;unit:string;referenceLow?:string;referenceHigh?:string;notes:string};
-export type Reminder={id:string;kind:"vaccination"|"appointment";petId:string;title:string;dueDate:string;daysUntil:number};
+export type Reminder={id:string;sourceId:string;kind:"vaccination"|"appointment";petId:string;title:string;dueDate:string;daysUntil:number;leadDays:number};
+export type ReminderRules={leadDays:number[]};
+export type ReminderAppointmentInput={title:string;startsAt:string;endsAt:string;visibility:"shared"|"private"};
 export type RelationshipSet={medicalRecordIds:string[];appointmentIds:string[]};
 export type PetDashboard={petId:string;petName:string;medicalRecordCount:number;documentCount:number;activeMedicationCount:number;openShoppingItemCount:number;latestWeightKg?:string;latestWeightDate?:string;nextVaccinationName?:string;nextVaccinationDate?:string;nextAppointmentTitle?:string;nextAppointmentAt?:string;month:string;budgetAmountCents:number;plannedAmountCents:number;actualAmountCents:number};
+export type PetTimelineItem={type:"medical_record"|"vaccination"|"medication"|"weight"|"lab_result"|"document"|"appointment";date:string;title:string;sourceId:string};
+export type PetTimelinePage={items:PetTimelineItem[];nextCursor?:string};

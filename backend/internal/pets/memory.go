@@ -2,10 +2,58 @@ package pets
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
 )
+
+func (r *MemoryRepository) ListTimeline(_ context.Context, _ string, petID string, limit int, cursor *timelineCursor) (TimelinePage, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.items[petID]; !ok {
+		return TimelinePage{}, ErrNotFound
+	}
+	items := make([]TimelineItem, 0)
+	for _, v := range r.records[petID] {
+		items = append(items, TimelineItem{Type: "medical_record", Date: v.OccurredOn, Title: v.Title, SourceID: v.ID})
+	}
+	for _, v := range r.vaccinations[petID] {
+		items = append(items, TimelineItem{Type: "vaccination", Date: v.AdministeredOn, Title: v.VaccineName, SourceID: v.ID})
+	}
+	for _, v := range r.medications[petID] {
+		items = append(items, TimelineItem{Type: "medication", Date: v.StartsOn, Title: v.Name, SourceID: v.ID})
+	}
+	for _, v := range r.weights[petID] {
+		items = append(items, TimelineItem{Type: "weight", Date: v.MeasuredOn, Title: fmt.Sprintf("Gewicht: %s kg", v.WeightKg), SourceID: v.ID})
+	}
+	for _, v := range r.labResults[petID] {
+		items = append(items, TimelineItem{Type: "lab_result", Date: v.MeasuredOn, Title: v.TestName, SourceID: v.ID})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Date != items[j].Date {
+			return items[i].Date > items[j].Date
+		}
+		if items[i].Type != items[j].Type {
+			return items[i].Type > items[j].Type
+		}
+		return items[i].SourceID > items[j].SourceID
+	})
+	page := TimelinePage{Items: make([]TimelineItem, 0, limit)}
+	for _, item := range items {
+		if cursor != nil && (item.Date > cursor.Date || (item.Date == cursor.Date && (item.Type > cursor.Type || (item.Type == cursor.Type && item.SourceID >= cursor.SourceID)))) {
+			continue
+		}
+		page.Items = append(page.Items, item)
+		if len(page.Items) > limit {
+			last := page.Items[limit-1]
+			page.NextCursor = encodeTimelineCursor(timelineCursor{Date: last.Date, Type: last.Type, SourceID: last.SourceID})
+			page.Items = page.Items[:limit]
+			break
+		}
+	}
+	return page, nil
+}
 
 type MemoryRepository struct {
 	mu           sync.Mutex
@@ -108,6 +156,20 @@ func (r *MemoryRepository) ListPetMedications(_ context.Context, _ string, petID
 		}
 	}
 	return page, nil
+}
+
+func (r *MemoryRepository) UpdateMedicationStock(_ context.Context, _ string, petID, medicationID, value string, at time.Time) (PetMedication, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for index, item := range r.medications[petID] {
+		if item.ID == medicationID {
+			item.StockQuantity = value
+			item.UpdatedAt = at
+			r.medications[petID][index] = item
+			return item, nil
+		}
+	}
+	return PetMedication{}, ErrNotFound
 }
 func (r *MemoryRepository) Create(_ context.Context, _, _ string, pet Pet) (Pet, error) {
 	r.mu.Lock()

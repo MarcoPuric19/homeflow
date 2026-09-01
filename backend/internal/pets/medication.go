@@ -15,6 +15,10 @@ type PetMedication struct {
 	EndsOn           *string   `json:"endsOn,omitempty"`
 	StockQuantity    string    `json:"stockQuantity"`
 	StockUnit        string    `json:"stockUnit,omitempty"`
+	PackageSize      *string   `json:"packageSize,omitempty"`
+	MinimumStock     *string   `json:"minimumStock,omitempty"`
+	PurchasedOn      *string   `json:"purchasedOn,omitempty"`
+	ExpiresOn        *string   `json:"expiresOn,omitempty"`
 	Notes            string    `json:"notes,omitempty"`
 	Active           bool      `json:"active"`
 	CreatedAt        time.Time `json:"createdAt"`
@@ -31,10 +35,18 @@ type PetMedicationInput struct {
 	EndsOn           *string `json:"endsOn"`
 	StockQuantity    string  `json:"stockQuantity"`
 	StockUnit        string  `json:"stockUnit"`
+	PackageSize      *string `json:"packageSize"`
+	MinimumStock     *string `json:"minimumStock"`
+	PurchasedOn      *string `json:"purchasedOn"`
+	ExpiresOn        *string `json:"expiresOn"`
 	Notes            string  `json:"notes"`
 	Active           *bool   `json:"active,omitempty"`
 }
 
 type PetMedicationPage struct {
 	Medications []PetMedication `json:"medications"`
+}
+
+type MedicationStockInput struct {
+	StockQuantity string `json:"stockQuantity"`
 }

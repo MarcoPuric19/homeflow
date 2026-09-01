@@ -90,6 +90,10 @@ func TestPetAPIFlow(t *testing.T) {
 	if dashboard.Code != http.StatusOK || !bytes.Contains(dashboard.Body.Bytes(), []byte(`"month":"2026-09"`)) {
 		t.Fatalf("dashboard status=%d body=%s", dashboard.Code, dashboard.Body.String())
 	}
+	timeline := petCall(t, handler, http.MethodGet, location+"/timeline?limit=2", "")
+	if timeline.Code != http.StatusOK || !bytes.Contains(timeline.Body.Bytes(), []byte(`"items"`)) || !bytes.Contains(timeline.Body.Bytes(), []byte(`"nextCursor"`)) {
+		t.Fatalf("timeline status=%d body=%s", timeline.Code, timeline.Body.String())
+	}
 }
 
 func TestPetAPIRejectsMalformedIDsAndUnboundedLists(t *testing.T) {
@@ -108,5 +112,11 @@ func TestPetAPIRejectsMalformedIDsAndUnboundedLists(t *testing.T) {
 	}
 	if response := petCall(t, handler, http.MethodGet, "/api/v1/pets/not-a-uuid/medications", ""); response.Code != http.StatusBadRequest {
 		t.Fatalf("medication id status=%d", response.Code)
+	}
+	if response := petCall(t, handler, http.MethodGet, "/api/v1/pets/not-a-uuid/timeline", ""); response.Code != http.StatusBadRequest {
+		t.Fatalf("timeline id status=%d", response.Code)
+	}
+	if response := petCall(t, handler, http.MethodGet, "/api/v1/pets/00000000-0000-4000-8000-000000000010/timeline?limit=101", ""); response.Code != http.StatusBadRequest {
+		t.Fatalf("timeline limit status=%d", response.Code)
 	}
 }

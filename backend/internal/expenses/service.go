@@ -110,7 +110,8 @@ func (s *Service) Exists(ctx context.Context, userID, expenseID string) (bool, e
 
 func (s *Service) UpsertBudget(ctx context.Context, userID, petID string, input BudgetInput) (Budget, error) {
 	input.Category = strings.TrimSpace(input.Category)
-	if !id.IsUUID(petID) || input.Category == "" || len(input.Category) > 100 || input.AmountCents < 0 {
+	input.Notes = strings.TrimSpace(input.Notes)
+	if !id.IsUUID(petID) || input.Category == "" || len(input.Category) > 100 || input.AmountCents < 0 || len(input.Notes) > 2000 || (input.WarningThresholdCents != nil && *input.WarningThresholdCents < 0) {
 		return Budget{}, ErrInvalid
 	}
 	if _, err := time.Parse("2006-01", input.Month); err != nil {
@@ -127,7 +128,7 @@ func (s *Service) UpsertBudget(ctx context.Context, userID, petID string, input 
 	if err != nil {
 		return Budget{}, err
 	}
-	return s.repository.UpsertBudget(ctx, userID, userID, Budget{ID: budgetID, PetID: petID, Month: input.Month, Category: input.Category, AmountCents: input.AmountCents, Currency: input.Currency, UpdatedAt: s.now()})
+	return s.repository.UpsertBudget(ctx, userID, userID, Budget{ID: budgetID, PetID: petID, Month: input.Month, Category: input.Category, AmountCents: input.AmountCents, Currency: input.Currency, WarningThresholdCents: input.WarningThresholdCents, Notes: input.Notes, UpdatedAt: s.now()})
 }
 
 func (s *Service) ListBudgets(ctx context.Context, userID, petID, month string) ([]Budget, error) {

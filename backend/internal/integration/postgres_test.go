@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 		pool.Close()
 		t.Fatal(err)
 	}
-	_, err = pool.Exec(ctx, `TRUNCATE event_outbox,audit_log,expense_appointments,expense_medical_records,document_appointments,document_medical_records,receipts,documents,pet_budgets,expenses,calendar_events,lab_results,weight_entries,
+	_, err = pool.Exec(ctx, `TRUNCATE event_outbox,audit_log,reminder_appointments,expense_appointments,expense_medical_records,document_appointments,document_medical_records,receipts,documents,pet_budgets,expenses,calendar_events,lab_results,weight_entries,
 		shopping_items,shopping_lists,pet_medications,medications,vaccinations,medical_records,pets,household_members,auth_sessions,users,households CASCADE`)
 	if err != nil {
 		pool.Close()
@@ -149,12 +150,29 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 	if _, err := expenseService.UpsertBudget(ctx, bob, created.ID, expenses.BudgetInput{Month: "2026-09", Category: "Tierarzt", AmountCents: 10000}); !errors.Is(err, expenses.ErrNotFound) {
 		t.Fatalf("cross-household budget err=%v", err)
 	}
-	if _, err := expenseService.UpsertBudget(ctx, alice, created.ID, expenses.BudgetInput{Month: "2026-09", Category: "Tierarzt", AmountCents: 10000}); err != nil {
-		t.Fatal(err)
+	warningThreshold := int64(3000)
+	budget, err := expenseService.UpsertBudget(ctx, alice, created.ID, expenses.BudgetInput{Month: "2026-09", Category: "Tierarzt", AmountCents: 10000, WarningThresholdCents: &warningThreshold, Notes: "Rücklage"})
+	if err != nil || budget.WarningThresholdCents == nil || *budget.WarningThresholdCents != 3000 || budget.Notes != "Rücklage" {
+		t.Fatalf("budget=%#v err=%v", budget, err)
 	}
 	petSummary, err := expenseService.PetSummary(ctx, alice, created.ID, "2026-09")
-	if err != nil || len(petSummary.Categories) != 1 || petSummary.Categories[0].PlannedAmountCents != petExpense.PlannedAmountCents || petSummary.Categories[0].BudgetAmountCents != 10000 {
+	if err != nil || len(petSummary.Categories) != 1 || petSummary.Categories[0].PlannedAmountCents != petExpense.PlannedAmountCents || petSummary.Categories[0].BudgetAmountCents != 10000 || petSummary.Categories[0].RemainingBudgetCents != 10000 || petSummary.Categories[0].WarningThresholdReached {
 		t.Fatalf("pet summary=%#v err=%v", petSummary, err)
+	}
+	if _, err := expenseService.MarkPaid(ctx, petExpense.ID, alice, expenses.MarkPaid{ActualAmountCents: 7000}); err != nil {
+		t.Fatal(err)
+	}
+	petSummary, err = expenseService.PetSummary(ctx, alice, created.ID, "2026-09")
+	if err != nil || petSummary.Categories[0].RemainingBudgetCents != 3000 || !petSummary.Categories[0].WarningThresholdReached {
+		t.Fatalf("threshold summary=%#v err=%v", petSummary, err)
+	}
+	yearlyThreshold := int64(1000)
+	if _, err := expenseService.UpsertBudget(ctx, alice, created.ID, expenses.BudgetInput{Month: "2026-10", Category: "Tierarzt", AmountCents: 5000, WarningThresholdCents: &yearlyThreshold}); err != nil {
+		t.Fatal(err)
+	}
+	yearlySummary, err := expenseService.PetSummary(ctx, alice, created.ID, "2026")
+	if err != nil || len(yearlySummary.Categories) != 1 || yearlySummary.Categories[0].BudgetAmountCents != 15000 || yearlySummary.Categories[0].WarningThresholdCents == nil || *yearlySummary.Categories[0].WarningThresholdCents != 4000 || yearlySummary.Categories[0].RemainingBudgetCents != 8000 || yearlySummary.Categories[0].WarningThresholdReached {
+		t.Fatalf("yearly summary=%#v err=%v", yearlySummary, err)
 	}
 	page, err := service.List(ctx, alice, false, 1, "")
 	if err != nil || len(page.Pets) != 1 || page.Pets[0].ID != created.ID {
@@ -216,8 +234,33 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 		t.Fatalf("appointment=%#v err=%v", appointment, err)
 	}
 	reminderService := reminders.NewService(reminders.NewPostgresRepository(pool))
+	reminderStart := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
+	reminderAppointment, err := reminderService.CreateAppointment(ctx, alice, firstVaccination.ID, reminders.AppointmentInput{Title: "Impftermin", StartsAt: reminderStart, EndsAt: reminderStart.Add(time.Hour), Visibility: "shared"})
+	if err != nil || reminderAppointment.PetID == nil || *reminderAppointment.PetID != created.ID || reminderAppointment.AppointmentType == nil || *reminderAppointment.AppointmentType != calendar.AppointmentVaccination {
+		t.Fatalf("reminder appointment=%#v err=%v", reminderAppointment, err)
+	}
+	if _, err := reminderService.CreateAppointment(ctx, alice, firstVaccination.ID, reminders.AppointmentInput{Title: "Doppelt", StartsAt: reminderStart, EndsAt: reminderStart.Add(time.Hour), Visibility: "private"}); !errors.Is(err, reminders.ErrDuplicate) {
+		t.Fatalf("duplicate reminder appointment err=%v", err)
+	}
+	if _, err := reminderService.CreateAppointment(ctx, bob, firstVaccination.ID, reminders.AppointmentInput{Title: "Fremd", StartsAt: reminderStart, EndsAt: reminderStart.Add(time.Hour), Visibility: "shared"}); !errors.Is(err, reminders.ErrNotFound) {
+		t.Fatalf("foreign reminder appointment err=%v", err)
+	}
+	rules, err := reminderService.GetRules(ctx, alice)
+	if err != nil || len(rules.LeadDays) != 3 || rules.LeadDays[0] != 30 {
+		t.Fatalf("default reminder rules=%#v err=%v", rules, err)
+	}
+	if _, err := reminderService.ReplaceRules(ctx, bob, reminders.Rules{LeadDays: []int{9}}); err != nil {
+		t.Fatal(err)
+	}
+	bobRules, err := reminderService.GetRules(ctx, bob)
+	if err != nil || len(bobRules.LeadDays) != 1 || bobRules.LeadDays[0] != 9 {
+		t.Fatalf("bob rules=%#v err=%v", bobRules, err)
+	}
+	if _, err := reminderService.ReplaceRules(ctx, alice, reminders.Rules{LeadDays: []int{9, 1}}); err != nil {
+		t.Fatal(err)
+	}
 	upcoming, err := reminderService.List(ctx, alice, "2026-09-30", 100)
-	if err != nil || len(upcoming) != 1 || upcoming[0].Kind != "appointment" {
+	if err != nil || len(upcoming) != 1 || upcoming[0].Kind != "appointment" || upcoming[0].LeadDays != 9 {
 		t.Fatalf("reminders=%#v err=%v", upcoming, err)
 	}
 	otherUpcoming, err := reminderService.List(ctx, bob, "2026-09-30", 100)
@@ -231,9 +274,20 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 	if _, err := service.Dashboard(ctx, bob, created.ID, "2026-09"); !errors.Is(err, pets.ErrNotFound) {
 		t.Fatalf("cross-household dashboard err=%v", err)
 	}
+	timeline, err := service.ListTimeline(ctx, alice, created.ID, 2, "")
+	if err != nil || len(timeline.Items) != 2 || timeline.NextCursor == "" || timeline.Items[0].Date < timeline.Items[1].Date {
+		t.Fatalf("timeline=%#v err=%v", timeline, err)
+	}
+	timelineNext, err := service.ListTimeline(ctx, alice, created.ID, 2, timeline.NextCursor)
+	if err != nil || len(timelineNext.Items) == 0 {
+		t.Fatalf("timeline next=%#v err=%v", timelineNext, err)
+	}
+	if _, err := service.ListTimeline(ctx, bob, created.ID, 30, ""); !errors.Is(err, pets.ErrNotFound) {
+		t.Fatalf("cross-household timeline err=%v", err)
+	}
 	window := calendar.Range{From: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), To: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), PetID: created.ID}
 	appointments, err := calendarService.List(ctx, alice, window)
-	if err != nil || len(appointments) != 1 {
+	if err != nil || len(appointments) != 2 || appointments[0].ID != appointment.ID || appointments[1].ID != reminderAppointment.ID {
 		t.Fatalf("appointments=%#v err=%v", appointments, err)
 	}
 	foreignAppointments, err := calendarService.List(ctx, bob, window)
@@ -255,12 +309,13 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 	if _, err := linkService.ReplaceDocument(ctx, alice, created.ID, document.ID, links.Set{MedicalRecordIDs: []string{first.ID}, AppointmentIDs: []string{"00000000-0000-4000-8000-000000000099"}}); !errors.Is(err, links.ErrNotFound) {
 		t.Fatalf("unknown appointment link err=%v", err)
 	}
-	medication, err := service.CreatePetMedication(ctx, alice, created.ID, pets.PetMedicationInput{Name: "Mittel", DoseText: "laut Tierarzt", FrequencyText: "morgens", StartsOn: "2026-09-01", StockQuantity: "12.500", StockUnit: "Tabletten"})
+	packageSize, minimumStock, purchasedOn, expiresOn := "20.000", "5.000", "2026-08-30", "2027-08-30"
+	medication, err := service.CreatePetMedication(ctx, alice, created.ID, pets.PetMedicationInput{Name: "Mittel", DoseText: "laut Tierarzt", FrequencyText: "morgens", StartsOn: "2026-09-01", StockQuantity: "12.500", StockUnit: "Tabletten", PackageSize: &packageSize, MinimumStock: &minimumStock, PurchasedOn: &purchasedOn, ExpiresOn: &expiresOn})
 	if err != nil || medication.StockQuantity != "12.500" {
 		t.Fatalf("medication=%#v err=%v", medication, err)
 	}
 	medications, err := service.ListPetMedications(ctx, alice, created.ID, false, 100)
-	if err != nil || len(medications.Medications) != 1 {
+	if err != nil || len(medications.Medications) != 1 || medications.Medications[0].MinimumStock == nil || *medications.Medications[0].MinimumStock != "5.000" {
 		t.Fatalf("medications=%#v err=%v", medications, err)
 	}
 	if _, err := service.ListPetMedications(ctx, bob, created.ID, false, 100); !errors.Is(err, pets.ErrNotFound) {
@@ -271,12 +326,67 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 	if err != nil || len(lists) != 1 || lists[0].ID != shopping.SharedListID {
 		t.Fatalf("lists=%#v err=%v", lists, err)
 	}
-	petItem, err := shoppingService.Create(ctx, shopping.CreateItem{Name: "Katzenfutter", Quantity: "2", PetIDs: []string{created.ID}}, alice)
-	if err != nil || len(petItem.PetIDs) != 1 {
+	if _, err := service.UpdateMedicationStock(ctx, alice, created.ID, medication.ID, pets.MedicationStockInput{StockQuantity: "2.000"}); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := shoppingService.PreviewMedication(ctx, alice, created.ID, medication.ID)
+	if err != nil || preview.MinimumStock != "5.000" {
+		t.Fatalf("preview=%#v err=%v", preview, err)
+	}
+	if _, err := shoppingService.PreviewMedication(ctx, bob, created.ID, medication.ID); !errors.Is(err, shopping.ErrNotFound) {
+		t.Fatalf("foreign preview err=%v", err)
+	}
+	results := make(chan error, 2)
+	items := make(chan shopping.Item, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			item, err := shoppingService.CreateMedicationItem(ctx, alice, created.ID, medication.ID, shopping.MedicationRestockInput{ListID: "shared"})
+			if err == nil {
+				items <- item
+			}
+			results <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(items)
+	var createdRestock shopping.Item
+	successes, duplicates := 0, 0
+	for err := range results {
+		if err == nil {
+			successes++
+		} else if errors.Is(err, shopping.ErrDuplicate) {
+			duplicates++
+		} else {
+			t.Fatalf("race create err=%v", err)
+		}
+	}
+	for item := range items {
+		createdRestock = item
+	}
+	if successes != 1 || duplicates != 1 || createdRestock.SourcePetMedicationID == nil || len(createdRestock.PetIDs) != 1 {
+		t.Fatalf("race successes=%d duplicates=%d item=%#v", successes, duplicates, createdRestock)
+	}
+	if _, err := shoppingService.Complete(ctx, createdRestock.ID, alice); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shoppingService.CreateMedicationItem(ctx, alice, created.ID, medication.ID, shopping.MedicationRestockInput{ListID: "shared"}); err != nil {
+		t.Fatalf("restock after completion err=%v", err)
+	}
+	updatedStock, err := service.UpdateMedicationStock(ctx, alice, created.ID, medication.ID, pets.MedicationStockInput{StockQuantity: "20.000"})
+	if err != nil || updatedStock.StockQuantity != "20.000" {
+		t.Fatalf("updated stock=%#v err=%v", updatedStock, err)
+	}
+	estimatedPrice := int64(1299)
+	petItem, err := shoppingService.Create(ctx, shopping.CreateItem{Name: "Katzenfutter", Quantity: "2", PetIDs: []string{created.ID, otherPet.ID}, PreferredBrand: "Beispiel", EstimatedPriceCents: &estimatedPrice, EstimatedPriceCurrency: "EUR", Recurring: true}, alice)
+	if err != nil || len(petItem.PetIDs) != 2 || petItem.EstimatedPriceCents == nil || *petItem.EstimatedPriceCents != 1299 || petItem.PreferredBrand != "Beispiel" || !petItem.Recurring {
 		t.Fatalf("pet item=%#v err=%v", petItem, err)
 	}
 	filtered, err := shoppingService.List(ctx, alice, "shared", false, created.ID, 100)
-	if err != nil || len(filtered) != 1 {
+	if err != nil || len(filtered) != 2 {
 		t.Fatalf("filtered=%#v err=%v", filtered, err)
 	}
 	foreignItems, err := shoppingService.List(ctx, bob, "shared", true, "", 100)

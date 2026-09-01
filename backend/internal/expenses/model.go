@@ -48,27 +48,34 @@ type CreateExpense struct {
 }
 
 type Budget struct {
-	ID          string    `json:"id"`
-	PetID       string    `json:"petId"`
-	Month       string    `json:"month"`
-	Category    string    `json:"category"`
-	AmountCents int64     `json:"amountCents"`
-	Currency    string    `json:"currency"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID                    string    `json:"id"`
+	PetID                 string    `json:"petId"`
+	Month                 string    `json:"month"`
+	Category              string    `json:"category"`
+	AmountCents           int64     `json:"amountCents"`
+	Currency              string    `json:"currency"`
+	WarningThresholdCents *int64    `json:"warningThresholdCents,omitempty"`
+	Notes                 string    `json:"notes,omitempty"`
+	UpdatedAt             time.Time `json:"updatedAt"`
 }
 
 type BudgetInput struct {
-	Month       string `json:"month"`
-	Category    string `json:"category"`
-	AmountCents int64  `json:"amountCents"`
-	Currency    string `json:"currency"`
+	Month                 string `json:"month"`
+	Category              string `json:"category"`
+	AmountCents           int64  `json:"amountCents"`
+	Currency              string `json:"currency"`
+	WarningThresholdCents *int64 `json:"warningThresholdCents,omitempty"`
+	Notes                 string `json:"notes"`
 }
 
 type CategorySummary struct {
-	Category           string `json:"category"`
-	PlannedAmountCents int64  `json:"plannedAmountCents"`
-	ActualAmountCents  int64  `json:"actualAmountCents"`
-	BudgetAmountCents  int64  `json:"budgetAmountCents"`
+	Category                string `json:"category"`
+	PlannedAmountCents      int64  `json:"plannedAmountCents"`
+	ActualAmountCents       int64  `json:"actualAmountCents"`
+	BudgetAmountCents       int64  `json:"budgetAmountCents"`
+	WarningThresholdCents   *int64 `json:"warningThresholdCents,omitempty"`
+	RemainingBudgetCents    int64  `json:"remainingBudgetCents"`
+	WarningThresholdReached bool   `json:"warningThresholdReached"`
 }
 
 type PetSummary struct {

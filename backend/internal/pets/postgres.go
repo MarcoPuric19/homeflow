@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"homeflow/backend/internal/outbox"
 )
 
 type PostgresRepository struct{ pool *pgxpool.Pool }
@@ -28,13 +29,19 @@ func scanPet(row pgx.Row) (Pet, error) {
 }
 
 func (r *PostgresRepository) Create(ctx context.Context, userID, createdBy string, pet Pet) (Pet, error) {
-	return scanPet(r.pool.QueryRow(ctx, `INSERT INTO pets
+	return outbox.Run(ctx, r.pool, func(tx pgx.Tx) (Pet, error) {
+		created, err := scanPet(tx.QueryRow(ctx, `INSERT INTO pets
       (id,household_id,name,species,breed,birth_date,approximate_birth_date,sex,microchip_number,color,insurance,insurance_number,veterinarian,notes,active,created_by,created_at,updated_at)
       SELECT $2,hm.household_id,$3,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
       FROM household_members hm WHERE hm.user_id=$1
 		RETURNING `+insertedPetColumns,
-		userID, pet.ID, pet.Name, pet.Species, pet.Breed, pet.BirthDate, pet.ApproximateBirthDate, pet.Sex,
-		pet.MicrochipNumber, pet.Color, pet.Insurance, pet.InsuranceNumber, pet.Veterinarian, pet.Notes, pet.Active, createdBy, pet.CreatedAt, pet.UpdatedAt))
+			userID, pet.ID, pet.Name, pet.Species, pet.Breed, pet.BirthDate, pet.ApproximateBirthDate, pet.Sex,
+			pet.MicrochipNumber, pet.Color, pet.Insurance, pet.InsuranceNumber, pet.Veterinarian, pet.Notes, pet.Active, createdBy, pet.CreatedAt, pet.UpdatedAt))
+		if err != nil {
+			return Pet{}, err
+		}
+		return created, outbox.WriteForPet(ctx, tx, "pet.created", "pet", created.ID, created.ID, nil)
+	})
 }
 
 func (r *PostgresRepository) List(ctx context.Context, userID string, includeInactive bool, limit int, after string) (Page, error) {
@@ -75,12 +82,18 @@ func (r *PostgresRepository) Get(ctx context.Context, userID, petID string) (Pet
 }
 
 func (r *PostgresRepository) Update(ctx context.Context, userID string, pet Pet) (Pet, error) {
-	return scanPet(r.pool.QueryRow(ctx, `UPDATE pets p SET name=$3,species=$4,breed=$5,birth_date=$6::date,
+	return outbox.Run(ctx, r.pool, func(tx pgx.Tx) (Pet, error) {
+		updated, err := scanPet(tx.QueryRow(ctx, `UPDATE pets p SET name=$3,species=$4,breed=$5,birth_date=$6::date,
       approximate_birth_date=$7,sex=$8,microchip_number=$9,color=$10,insurance=$11,insurance_number=$12,veterinarian=$13,notes=$14,active=$15,updated_at=$16
       FROM household_members hm
       WHERE p.id=$2 AND hm.user_id=$1 AND hm.household_id=p.household_id
 		RETURNING `+petColumns, userID, pet.ID, pet.Name, pet.Species, pet.Breed, pet.BirthDate,
-		pet.ApproximateBirthDate, pet.Sex, pet.MicrochipNumber, pet.Color, pet.Insurance, pet.InsuranceNumber, pet.Veterinarian, pet.Notes, pet.Active, pet.UpdatedAt))
+			pet.ApproximateBirthDate, pet.Sex, pet.MicrochipNumber, pet.Color, pet.Insurance, pet.InsuranceNumber, pet.Veterinarian, pet.Notes, pet.Active, pet.UpdatedAt))
+		if err != nil {
+			return Pet{}, err
+		}
+		return updated, outbox.WriteForPet(ctx, tx, "pet.updated", "pet", updated.ID, updated.ID, nil)
+	})
 }
 
 func (r *PostgresRepository) ListTimeline(ctx context.Context, userID, petID string, limit int, cursor *timelineCursor) (TimelinePage, error) {
@@ -144,14 +157,20 @@ func scanMedicalRecord(row pgx.Row) (MedicalRecord, error) {
 }
 
 func (r *PostgresRepository) CreateMedicalRecord(ctx context.Context, userID, createdBy string, record MedicalRecord) (MedicalRecord, error) {
-	return scanMedicalRecord(r.pool.QueryRow(ctx, `INSERT INTO medical_records
+	return outbox.Run(ctx, r.pool, func(tx pgx.Tx) (MedicalRecord, error) {
+		created, err := scanMedicalRecord(tx.QueryRow(ctx, `INSERT INTO medical_records
 	  (id,household_id,pet_id,record_type,occurred_on,title,summary,veterinarian,details,created_by,created_at,updated_at)
 	  SELECT $3,p.household_id,p.id,$4,$5::date,$6,$7,$8,$9,$10,$11,$12
 	  FROM pets p JOIN household_members hm ON hm.household_id=p.household_id
 	  WHERE hm.user_id=$1 AND p.id=$2
 	  RETURNING `+insertedMedicalColumns, userID, record.PetID, record.ID, record.RecordType,
-		record.OccurredOn, record.Title, record.Summary, record.Veterinarian, record.Details,
-		createdBy, record.CreatedAt, record.UpdatedAt))
+			record.OccurredOn, record.Title, record.Summary, record.Veterinarian, record.Details,
+			createdBy, record.CreatedAt, record.UpdatedAt))
+		if err != nil {
+			return MedicalRecord{}, err
+		}
+		return created, outbox.WriteForPet(ctx, tx, "medical_record.created", "medical_record", created.ID, created.PetID, nil)
+	})
 }
 
 func (r *PostgresRepository) ListMedicalRecords(ctx context.Context, userID, petID string, limit int, cursor *medicalCursor) (MedicalRecordPage, error) {
@@ -205,16 +224,22 @@ func scanVaccination(row pgx.Row) (Vaccination, error) {
 }
 
 func (r *PostgresRepository) CreateVaccination(ctx context.Context, userID, createdBy string, vaccination Vaccination) (Vaccination, error) {
-	return scanVaccination(r.pool.QueryRow(ctx, `INSERT INTO vaccinations
+	return outbox.Run(ctx, r.pool, func(tx pgx.Tx) (Vaccination, error) {
+		created, err := scanVaccination(tx.QueryRow(ctx, `INSERT INTO vaccinations
 	  (id,household_id,pet_id,vaccine_name,manufacturer,diseases,administered_on,valid_until,next_due_date,document_id,veterinarian,batch_number,notes,created_by,created_at,updated_at)
 	  SELECT $3,p.household_id,p.id,$4,$5,$6,$7::date,$8::date,$9::date,$10::uuid,$11,$12,$13,$14,$15,$16
 	  FROM pets p JOIN household_members hm ON hm.household_id=p.household_id
 	  WHERE hm.user_id=$1 AND p.id=$2
 	    AND ($10::uuid IS NULL OR EXISTS(SELECT 1 FROM documents d WHERE d.household_id=p.household_id AND d.pet_id=p.id AND d.id=$10))
 	  RETURNING `+insertedVaccinationColumns,
-		userID, vaccination.PetID, vaccination.ID, vaccination.VaccineName, vaccination.Manufacturer, vaccination.Diseases, vaccination.AdministeredOn,
-		vaccination.ValidUntil, vaccination.NextDueDate, vaccination.DocumentID, vaccination.Veterinarian, vaccination.BatchNumber, vaccination.Notes,
-		createdBy, vaccination.CreatedAt, vaccination.UpdatedAt))
+			userID, vaccination.PetID, vaccination.ID, vaccination.VaccineName, vaccination.Manufacturer, vaccination.Diseases, vaccination.AdministeredOn,
+			vaccination.ValidUntil, vaccination.NextDueDate, vaccination.DocumentID, vaccination.Veterinarian, vaccination.BatchNumber, vaccination.Notes,
+			createdBy, vaccination.CreatedAt, vaccination.UpdatedAt))
+		if err != nil {
+			return Vaccination{}, err
+		}
+		return created, outbox.WriteForPet(ctx, tx, "vaccination.recorded", "vaccination", created.ID, created.PetID, nil)
+	})
 }
 
 func (r *PostgresRepository) ListVaccinations(ctx context.Context, userID, petID string, limit int, cursor *vaccinationCursor) (VaccinationPage, error) {
@@ -255,14 +280,14 @@ func (r *PostgresRepository) ListVaccinations(ctx context.Context, userID, petID
 
 const petMedicationColumns = `pm.id::text,pm.pet_id::text,pm.medication_id::text,m.name,m.active_ingredient,m.dosage_form,
       pm.dose_text,pm.frequency_text,pm.starts_on::text,pm.ends_on::text,pm.stock_quantity::text,
-      pm.stock_unit,pm.notes,pm.active,pm.created_at,pm.updated_at`
+      pm.stock_unit,pm.package_size::text,pm.minimum_stock::text,pm.purchased_on::text,pm.expires_on::text,pm.notes,pm.active,pm.created_at,pm.updated_at`
 
 func scanPetMedication(row pgx.Row) (PetMedication, error) {
 	var medication PetMedication
 	err := row.Scan(&medication.ID, &medication.PetID, &medication.MedicationID, &medication.Name,
 		&medication.ActiveIngredient, &medication.DosageForm, &medication.DoseText, &medication.FrequencyText,
 		&medication.StartsOn, &medication.EndsOn, &medication.StockQuantity, &medication.StockUnit,
-		&medication.Notes, &medication.Active, &medication.CreatedAt, &medication.UpdatedAt)
+		&medication.PackageSize, &medication.MinimumStock, &medication.PurchasedOn, &medication.ExpiresOn, &medication.Notes, &medication.Active, &medication.CreatedAt, &medication.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PetMedication{}, ErrNotFound
 	}
@@ -284,8 +309,8 @@ func (r *PostgresRepository) CreatePetMedication(ctx context.Context, userID, cr
 	if _, err := tx.Exec(ctx, `INSERT INTO medications(id,household_id,name,active_ingredient,dosage_form) VALUES($1,$2,$3,$4,$5)`, medicationID, householdID, medication.Name, medication.ActiveIngredient, medication.DosageForm); err != nil {
 		return PetMedication{}, err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO pet_medications(id,household_id,pet_id,medication_id,dose_text,frequency_text,starts_on,ends_on,stock_quantity,stock_unit,notes,active,created_by,created_at,updated_at)
-	 VALUES($1,$2,$3,$4,$5,$6,$7::date,$8::date,$9::numeric,$10,$11,$12,$13,$14,$15)`, medication.ID, householdID, medication.PetID, medicationID, medication.DoseText, medication.FrequencyText, medication.StartsOn, medication.EndsOn, medication.StockQuantity, medication.StockUnit, medication.Notes, medication.Active, createdBy, medication.CreatedAt, medication.UpdatedAt); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO pet_medications(id,household_id,pet_id,medication_id,dose_text,frequency_text,starts_on,ends_on,stock_quantity,stock_unit,package_size,minimum_stock,purchased_on,expires_on,notes,active,created_by,created_at,updated_at)
+	 VALUES($1,$2,$3,$4,$5,$6,$7::date,$8::date,$9::numeric,$10,$11::numeric,$12::numeric,$13::date,$14::date,$15,$16,$17,$18,$19)`, medication.ID, householdID, medication.PetID, medicationID, medication.DoseText, medication.FrequencyText, medication.StartsOn, medication.EndsOn, medication.StockQuantity, medication.StockUnit, medication.PackageSize, medication.MinimumStock, medication.PurchasedOn, medication.ExpiresOn, medication.Notes, medication.Active, createdBy, medication.CreatedAt, medication.UpdatedAt); err != nil {
 		return PetMedication{}, err
 	}
 	created, err := scanPetMedication(tx.QueryRow(ctx, `SELECT `+petMedicationColumns+` FROM pet_medications pm JOIN medications m ON m.id=pm.medication_id WHERE pm.id=$1`, medication.ID))
@@ -318,6 +343,10 @@ func (r *PostgresRepository) ListPetMedications(ctx context.Context, userID, pet
 		page.Medications = append(page.Medications, item)
 	}
 	return page, rows.Err()
+}
+
+func (r *PostgresRepository) UpdateMedicationStock(ctx context.Context, userID, petID, medicationID, value string, at time.Time) (PetMedication, error) {
+	return scanPetMedication(r.pool.QueryRow(ctx, `UPDATE pet_medications pm SET stock_quantity=$4::numeric,updated_at=$5 FROM medications m,household_members hm WHERE pm.id=$3 AND pm.pet_id=$2 AND m.id=pm.medication_id AND m.household_id=pm.household_id AND hm.user_id=$1 AND hm.household_id=pm.household_id RETURNING `+petMedicationColumns, userID, petID, medicationID, value, at))
 }
 
 func (r *PostgresRepository) CreateWeight(ctx context.Context, userID, createdBy string, e WeightEntry) (WeightEntry, error) {

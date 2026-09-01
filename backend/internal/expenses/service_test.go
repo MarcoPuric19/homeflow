@@ -61,9 +61,14 @@ func TestCreateAndPayExpense(t *testing.T) {
 func TestBudgetAndSummaryValidation(t *testing.T) {
 	service := NewService(&fakeRepository{})
 	petID := "00000000-0000-4000-8000-000000000010"
-	budget, err := service.UpsertBudget(context.Background(), "user", petID, BudgetInput{Month: "2026-09", Category: "Tierarzt", AmountCents: 5000})
-	if err != nil || budget.AmountCents != 5000 || budget.Currency != "EUR" {
+	threshold := int64(1000)
+	budget, err := service.UpsertBudget(context.Background(), "user", petID, BudgetInput{Month: "2026-09", Category: "Tierarzt", AmountCents: 5000, WarningThresholdCents: &threshold, Notes: " Nur intern "})
+	if err != nil || budget.AmountCents != 5000 || budget.Currency != "EUR" || budget.WarningThresholdCents == nil || *budget.WarningThresholdCents != 1000 || budget.Notes != "Nur intern" {
 		t.Fatalf("budget=%#v err=%v", budget, err)
+	}
+	negative := int64(-1)
+	if _, err := service.UpsertBudget(context.Background(), "user", petID, BudgetInput{Month: "2026-09", Category: "Tierarzt", AmountCents: 5000, WarningThresholdCents: &negative}); err != ErrInvalid {
+		t.Fatalf("negative threshold err=%v", err)
 	}
 	if _, err := service.PetSummary(context.Background(), "user", petID, "2026"); err != nil {
 		t.Fatal(err)

@@ -11,34 +11,57 @@ const (
 )
 
 type Item struct {
-	ID          string     `json:"id"`
-	ListID      string     `json:"listId"`
-	Name        string     `json:"name"`
-	Quantity    string     `json:"quantity"`
-	Unit        string     `json:"unit,omitempty"`
-	Category    string     `json:"category,omitempty"`
-	Note        string     `json:"note,omitempty"`
-	Priority    Priority   `json:"priority"`
-	Store       string     `json:"store,omitempty"`
-	AddedBy     string     `json:"addedBy"`
-	Completed   bool       `json:"completed"`
-	PurchasedBy string     `json:"purchasedBy,omitempty"`
-	CompletedAt *time.Time `json:"completedAt,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
-	PetIDs      []string   `json:"petIds"`
+	ID                     string     `json:"id"`
+	ListID                 string     `json:"listId"`
+	Name                   string     `json:"name"`
+	Quantity               string     `json:"quantity"`
+	Unit                   string     `json:"unit,omitempty"`
+	Category               string     `json:"category,omitempty"`
+	Note                   string     `json:"note,omitempty"`
+	Priority               Priority   `json:"priority"`
+	Store                  string     `json:"store,omitempty"`
+	AddedBy                string     `json:"addedBy"`
+	Completed              bool       `json:"completed"`
+	PurchasedBy            string     `json:"purchasedBy,omitempty"`
+	CompletedAt            *time.Time `json:"completedAt,omitempty"`
+	CreatedAt              time.Time  `json:"createdAt"`
+	UpdatedAt              time.Time  `json:"updatedAt"`
+	PetIDs                 []string   `json:"petIds"`
+	SourcePetMedicationID  *string    `json:"sourcePetMedicationId,omitempty"`
+	PreferredBrand         string     `json:"preferredBrand,omitempty"`
+	EstimatedPriceCents    *int64     `json:"estimatedPriceCents,omitempty"`
+	EstimatedPriceCurrency string     `json:"estimatedPriceCurrency"`
+	Recurring              bool       `json:"recurring"`
+}
+
+type MedicationRestockPreview struct {
+	PetID         string  `json:"petId"`
+	MedicationID  string  `json:"medicationId"`
+	Name          string  `json:"name"`
+	StockQuantity string  `json:"stockQuantity"`
+	MinimumStock  string  `json:"minimumStock"`
+	StockUnit     string  `json:"stockUnit"`
+	PackageSize   *string `json:"packageSize,omitempty"`
+}
+
+type MedicationRestockInput struct {
+	ListID string `json:"listId"`
 }
 
 type CreateItem struct {
-	ListID   string   `json:"listId"`
-	Name     string   `json:"name"`
-	Quantity string   `json:"quantity"`
-	Unit     string   `json:"unit"`
-	Category string   `json:"category"`
-	Note     string   `json:"note"`
-	Priority Priority `json:"priority"`
-	Store    string   `json:"store"`
-	PetIDs   []string `json:"petIds"`
+	ListID                 string   `json:"listId"`
+	Name                   string   `json:"name"`
+	Quantity               string   `json:"quantity"`
+	Unit                   string   `json:"unit"`
+	Category               string   `json:"category"`
+	Note                   string   `json:"note"`
+	Priority               Priority `json:"priority"`
+	Store                  string   `json:"store"`
+	PetIDs                 []string `json:"petIds"`
+	PreferredBrand         string   `json:"preferredBrand"`
+	EstimatedPriceCents    *int64   `json:"estimatedPriceCents"`
+	EstimatedPriceCurrency string   `json:"estimatedPriceCurrency"`
+	Recurring              bool     `json:"recurring"`
 }
 
 type List struct {

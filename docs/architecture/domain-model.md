@@ -63,6 +63,35 @@ involved.
 bounded counts, the newest weight, next manual vaccination due date, next
 visible appointment and current-month financial totals. Detailed timelines are
 still loaded only when opened; the dashboard does not duplicate domain state.
+
+The combined pet timeline is a read-only projection across medical records,
+vaccinations, medication assignments, weights, lab results, documents and pet
+appointments. It is fetched with one bounded `UNION ALL` query and paginated
+newest-first by date, source type and source id. Its title is source data, not
+an automated medical interpretation or summary.
+
+Each household stores one to ten unique reminder lead times. The default set is
+30, 7 and 1 days. Reminder reads emit a stable item for the exact configured
+stage reached by a vaccination due date or pet appointment; there is no
+scheduler, delivery state or external notification component.
+
+A vaccination reminder may be converted into a calendar appointment only by
+an explicit user request that supplies title, time and visibility. The event is
+owned by the caller, references the same pet and has appointment type
+`vaccination`. `reminder_appointments` provides a durable one-to-one idempotency
+key for the source vaccination; foreign-household sources are indistinguishable
+from missing ones.
+
+Medication inventory may additionally store an exact positive package size, an
+exact non-negative minimum stock and manual purchase/expiry dates. Quantities
+share the documented stock unit. These fields never trigger dose or consumption
+calculations.
+
+When documented medication stock is below its manual minimum, users may first
+request a read-only restock preview and then explicitly create a pet-linked
+shopping item. A partial unique index permits only one open item per medication
+assignment under races; completing it permits a later item. Stock itself is
+updated through a separate exact, manual replacement operation.
 Financial month/year predicates use half-open date ranges so PostgreSQL can use
 the household/date indexes; formatting a date inside a filter is avoided.
 
@@ -74,6 +103,9 @@ store, creator, completion state, buyer and timestamps. Completing an item is a
 state transition, not deletion. Lists and items carry the household boundary.
 `ShoppingItemPet` is a many-to-many relation so an item may target no pet, one
 pet or several pets without duplicating the item.
+Items may additionally document a preferred brand, an estimated integer-minor-
+unit price with currency and whether the purchase is recurring. Recurrence is
+descriptive only and never materialises another item automatically.
 
 ## Calendar
 
@@ -93,8 +125,12 @@ status, user, optional payment method and notes. Floating point is never used
 for money. Every expense belongs to the caller's household and may reference a
 pet from that same household plus a separate budget category. `PetBudget`
 stores one integer-cent amount per household, pet, calendar month and category;
-the composite unique key makes updates deterministic. Monthly and annual pet
-summaries aggregate at most 100 categories and never scan an unbounded period.
+the composite unique key makes updates deterministic. It may additionally hold
+a fixed warning threshold in integer cents and private notes. The remaining
+budget is the budget amount minus actually paid expenses; a warning is reached
+when that value is less than or equal to the threshold. Monthly and annual pet
+summaries aggregate budgets and thresholds into at most 100 categories and
+never scan an unbounded period.
 
 ## Receipts
 

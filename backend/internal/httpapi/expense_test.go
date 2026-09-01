@@ -116,12 +116,15 @@ func TestExpenseAndReceiptAPI(t *testing.T) {
 func TestPetBudgetAndSummaryAPI(t *testing.T) {
 	handler := sprint3Handler(t)
 	petID := "00000000-0000-4000-8000-000000000020"
-	put := httptest.NewRequest(http.MethodPut, "/api/v1/pets/"+petID+"/budgets", bytes.NewBufferString(`{"month":"2026-09","category":"Tierarzt","amountCents":5000}`))
+	put := httptest.NewRequest(http.MethodPut, "/api/v1/pets/"+petID+"/budgets", bytes.NewBufferString(`{"month":"2026-09","category":"Tierarzt","amountCents":5000,"warningThresholdCents":1000,"notes":"Rücklage"}`))
 	put.Header.Set("Authorization", "Bearer "+testToken)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, put)
 	if response.Code != http.StatusOK {
 		t.Fatalf("budget status=%d body=%s", response.Code, response.Body.String())
+	}
+	if !bytes.Contains(response.Body.Bytes(), []byte(`"warningThresholdCents":1000`)) {
+		t.Fatalf("budget body=%s", response.Body.String())
 	}
 	get := httptest.NewRequest(http.MethodGet, "/api/v1/pets/"+petID+"/expense-summary?period=2026-09", nil)
 	get.Header.Set("Authorization", "Bearer "+testToken)

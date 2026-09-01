@@ -154,12 +154,16 @@ func TestPetMedicationKeepsDocumentedDoseAndExactStock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	medication, err := service.CreatePetMedication(context.Background(), "user", pet.ID, PetMedicationInput{Name: "Mittel", DoseText: "laut Tierarzt", FrequencyText: "morgens", StartsOn: "2026-09-01", StockQuantity: "12.500", StockUnit: "Tabletten"})
-	if err != nil || medication.StockQuantity != "12.500" {
+	packageSize, minimumStock, purchasedOn, expiresOn := "20.000", "5.000", "2026-08-30", "2027-08-30"
+	medication, err := service.CreatePetMedication(context.Background(), "user", pet.ID, PetMedicationInput{Name: "Mittel", DoseText: "laut Tierarzt", FrequencyText: "morgens", StartsOn: "2026-09-01", StockQuantity: "12.500", StockUnit: "Tabletten", PackageSize: &packageSize, MinimumStock: &minimumStock, PurchasedOn: &purchasedOn, ExpiresOn: &expiresOn})
+	if err != nil || medication.StockQuantity != "12.500" || medication.MinimumStock == nil || *medication.MinimumStock != "5.000" {
 		t.Fatalf("medication=%#v err=%v", medication, err)
 	}
 	if _, err := service.CreatePetMedication(context.Background(), "user", pet.ID, PetMedicationInput{Name: "Mittel", DoseText: "x", FrequencyText: "x", StartsOn: "2026-09-01", StockQuantity: "1.2345"}); err != ErrInvalidMedication {
 		t.Fatalf("got %v", err)
+	}
+	if _, err := service.CreatePetMedication(context.Background(), "user", pet.ID, PetMedicationInput{Name: "Mittel", DoseText: "x", FrequencyText: "x", StartsOn: "2026-09-01", StockQuantity: "0", PackageSize: &packageSize}); err != ErrInvalidMedication {
+		t.Fatalf("inventory without unit err=%v", err)
 	}
 }
 
@@ -191,5 +195,35 @@ func TestDashboardValidatesBoundedMonth(t *testing.T) {
 	}
 	if _, err := service.Dashboard(context.Background(), "user", petID, "all"); err != ErrInvalid {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestTimelineIsBoundedAndKeysetPaginated(t *testing.T) {
+	repository := NewMemoryRepository()
+	service := NewService(repository)
+	service.now = func() time.Time { return time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC) }
+	pet, err := service.Create(context.Background(), "user", Input{Name: "Momo", Species: "Katze"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateMedicalRecord(context.Background(), "user", pet.ID, MedicalRecordInput{RecordType: RecordExamination, OccurredOn: "2026-08-30", Title: "Kontrolle"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateWeight(context.Background(), "user", pet.ID, WeightInput{MeasuredOn: "2026-08-31", WeightKg: "4.250"}); err != nil {
+		t.Fatal(err)
+	}
+	page, err := service.ListTimeline(context.Background(), "user", pet.ID, 1, "")
+	if err != nil || len(page.Items) != 1 || page.Items[0].Type != "weight" || page.NextCursor == "" {
+		t.Fatalf("page=%#v err=%v", page, err)
+	}
+	next, err := service.ListTimeline(context.Background(), "user", pet.ID, 1, page.NextCursor)
+	if err != nil || len(next.Items) != 1 || next.Items[0].Title != "Kontrolle" {
+		t.Fatalf("next=%#v err=%v", next, err)
+	}
+	if _, err := service.ListTimeline(context.Background(), "user", pet.ID, 101, ""); err != ErrInvalidTimeline {
+		t.Fatalf("limit err=%v", err)
+	}
+	if _, err := service.ListTimeline(context.Background(), "user", pet.ID, 30, "broken"); err != ErrInvalidTimeline {
+		t.Fatalf("cursor err=%v", err)
 	}
 }

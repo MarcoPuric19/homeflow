@@ -1,0 +1,2 @@
+DROP INDEX shopping_items_open_medication_source_idx;
+ALTER TABLE shopping_items DROP COLUMN source_pet_medication_id;

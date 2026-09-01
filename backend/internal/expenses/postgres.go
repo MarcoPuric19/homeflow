@@ -111,13 +111,13 @@ func nullableUUID(value string) any {
 }
 
 func (r *PostgresRepository) UpsertBudget(ctx context.Context, userID, createdBy string, budget Budget) (Budget, error) {
-	err := r.pool.QueryRow(ctx, `INSERT INTO pet_budgets(id,household_id,pet_id,month,category,amount_cents,currency,created_by,created_at,updated_at)
-	 SELECT $3,p.household_id,p.id,$4::date,$5,$6,$7,$8,$9,$9 FROM pets p
+	err := r.pool.QueryRow(ctx, `INSERT INTO pet_budgets(id,household_id,pet_id,month,category,amount_cents,currency,warning_threshold_cents,notes,created_by,created_at,updated_at)
+	 SELECT $3,p.household_id,p.id,$4::date,$5,$6,$7,$8,$9,$10,$11,$11 FROM pets p
 	 JOIN household_members hm ON hm.household_id=p.household_id WHERE hm.user_id=$1 AND p.id=$2
-	 ON CONFLICT(household_id,pet_id,month,category) DO UPDATE SET amount_cents=EXCLUDED.amount_cents,currency=EXCLUDED.currency,updated_at=EXCLUDED.updated_at
-	 RETURNING id::text,pet_id::text,to_char(month,'YYYY-MM'),category,amount_cents,currency,updated_at`,
-		userID, budget.PetID, budget.ID, budget.Month+"-01", budget.Category, budget.AmountCents, budget.Currency, createdBy, budget.UpdatedAt).
-		Scan(&budget.ID, &budget.PetID, &budget.Month, &budget.Category, &budget.AmountCents, &budget.Currency, &budget.UpdatedAt)
+	 ON CONFLICT(household_id,pet_id,month,category) DO UPDATE SET amount_cents=EXCLUDED.amount_cents,currency=EXCLUDED.currency,warning_threshold_cents=EXCLUDED.warning_threshold_cents,notes=EXCLUDED.notes,updated_at=EXCLUDED.updated_at
+	 RETURNING id::text,pet_id::text,to_char(month,'YYYY-MM'),category,amount_cents,currency,warning_threshold_cents,notes,updated_at`,
+		userID, budget.PetID, budget.ID, budget.Month+"-01", budget.Category, budget.AmountCents, budget.Currency, budget.WarningThresholdCents, budget.Notes, createdBy, budget.UpdatedAt).
+		Scan(&budget.ID, &budget.PetID, &budget.Month, &budget.Category, &budget.AmountCents, &budget.Currency, &budget.WarningThresholdCents, &budget.Notes, &budget.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Budget{}, ErrNotFound
 	}
@@ -128,7 +128,7 @@ func (r *PostgresRepository) ListBudgets(ctx context.Context, userID, petID, mon
 	if err := r.requirePet(ctx, userID, petID); err != nil {
 		return nil, err
 	}
-	rows, err := r.pool.Query(ctx, `SELECT b.id::text,b.pet_id::text,to_char(b.month,'YYYY-MM'),b.category,b.amount_cents,b.currency,b.updated_at
+	rows, err := r.pool.Query(ctx, `SELECT b.id::text,b.pet_id::text,to_char(b.month,'YYYY-MM'),b.category,b.amount_cents,b.currency,b.warning_threshold_cents,b.notes,b.updated_at
 	 FROM pet_budgets b JOIN household_members hm ON hm.household_id=b.household_id
 	 WHERE hm.user_id=$1 AND b.pet_id=$2 AND b.month=$3::date ORDER BY b.category LIMIT 100`, userID, petID, month+"-01")
 	if err != nil {
@@ -138,7 +138,7 @@ func (r *PostgresRepository) ListBudgets(ctx context.Context, userID, petID, mon
 	result := make([]Budget, 0)
 	for rows.Next() {
 		var b Budget
-		if err := rows.Scan(&b.ID, &b.PetID, &b.Month, &b.Category, &b.AmountCents, &b.Currency, &b.UpdatedAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.PetID, &b.Month, &b.Category, &b.AmountCents, &b.Currency, &b.WarningThresholdCents, &b.Notes, &b.UpdatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, b)
@@ -168,11 +168,12 @@ func (r *PostgresRepository) PetSummary(ctx context.Context, userID, petID, peri
 	 WHERE hm.user_id=$1 AND e.pet_id=$2
 	 AND e.due_date >= CASE WHEN length($3)=4 THEN ($3||'-01-01')::date ELSE ($3||'-01')::date END
 	 AND e.due_date < CASE WHEN length($3)=4 THEN ($3||'-01-01')::date + interval '1 year' ELSE ($3||'-01')::date + interval '1 month' END GROUP BY 1),
-	 budget_totals AS (SELECT category,sum(amount_cents) budget FROM pet_budgets b JOIN household_members hm ON hm.household_id=b.household_id
+	 budget_totals AS (SELECT category,sum(amount_cents) budget,sum(warning_threshold_cents) warning_threshold FROM pet_budgets b JOIN household_members hm ON hm.household_id=b.household_id
 	 WHERE hm.user_id=$1 AND b.pet_id=$2
 	 AND b.month >= CASE WHEN length($3)=4 THEN ($3||'-01-01')::date ELSE ($3||'-01')::date END
 	 AND b.month < CASE WHEN length($3)=4 THEN ($3||'-01-01')::date + interval '1 year' ELSE ($3||'-01')::date + interval '1 month' END GROUP BY category)
-	 SELECT COALESCE(e.category,b.category),COALESCE(e.planned,0),COALESCE(e.actual,0),COALESCE(b.budget,0)
+	 SELECT COALESCE(e.category,b.category),COALESCE(e.planned,0),COALESCE(e.actual,0),COALESCE(b.budget,0),b.warning_threshold,
+	 COALESCE(b.budget,0)-COALESCE(e.actual,0),b.warning_threshold IS NOT NULL AND COALESCE(b.budget,0)-COALESCE(e.actual,0) <= b.warning_threshold
 	 FROM expense_totals e FULL JOIN budget_totals b ON b.category=e.category ORDER BY 1 LIMIT 100`, userID, petID, period)
 	if err != nil {
 		return PetSummary{}, err
@@ -181,7 +182,7 @@ func (r *PostgresRepository) PetSummary(ctx context.Context, userID, petID, peri
 	summary := PetSummary{PetID: petID, Period: period, Categories: make([]CategorySummary, 0)}
 	for rows.Next() {
 		var c CategorySummary
-		if err := rows.Scan(&c.Category, &c.PlannedAmountCents, &c.ActualAmountCents, &c.BudgetAmountCents); err != nil {
+		if err := rows.Scan(&c.Category, &c.PlannedAmountCents, &c.ActualAmountCents, &c.BudgetAmountCents, &c.WarningThresholdCents, &c.RemainingBudgetCents, &c.WarningThresholdReached); err != nil {
 			return PetSummary{}, err
 		}
 		summary.Categories = append(summary.Categories, c)

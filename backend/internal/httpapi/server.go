@@ -138,6 +138,9 @@ func NewFullWithOptions(logger *slog.Logger, authenticator auth.Authenticator, s
 		private.HandleFunc("POST /api/v1/pets/{petID}/vaccinations", s.createVaccination)
 		private.HandleFunc("GET /api/v1/pets/{petID}/medications", s.listPetMedications)
 		private.HandleFunc("POST /api/v1/pets/{petID}/medications", s.createPetMedication)
+		private.HandleFunc("GET /api/v1/pets/{petID}/medications/{medicationID}/restock-preview", s.medicationRestockPreview)
+		private.HandleFunc("POST /api/v1/pets/{petID}/medications/{medicationID}/shopping-item", s.createMedicationShoppingItem)
+		private.HandleFunc("PUT /api/v1/pets/{petID}/medications/{medicationID}/stock", s.updateMedicationStock)
 		private.HandleFunc("GET /api/v1/pets/{petID}/weights", s.listWeights)
 		private.HandleFunc("POST /api/v1/pets/{petID}/weights", s.createWeight)
 		private.HandleFunc("GET /api/v1/pets/{petID}/lab-results", s.listLabResults)
@@ -147,6 +150,9 @@ func NewFullWithOptions(logger *slog.Logger, authenticator auth.Authenticator, s
 	}
 	if options.Reminders != nil {
 		private.HandleFunc("GET /api/v1/reminders", s.listReminders)
+		private.HandleFunc("GET /api/v1/reminder-rules", s.getReminderRules)
+		private.HandleFunc("PUT /api/v1/reminder-rules", s.replaceReminderRules)
+		private.HandleFunc("POST /api/v1/reminders/vaccinations/{sourceID}/appointment", s.createReminderAppointment)
 	}
 	if options.Documents != nil {
 		private.HandleFunc("GET /api/v1/pets/{petID}/documents", s.listDocuments)
@@ -166,6 +172,116 @@ func NewFullWithOptions(logger *slog.Logger, authenticator auth.Authenticator, s
 
 	s.handler = securityHeaders(requestLogger(logger, options.Metrics, recoverer(logger, public)))
 	return s
+}
+
+func (s *Server) medicationRestockPreview(w http.ResponseWriter, r *http.Request) {
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	preview, err := s.shopping.PreviewMedication(r.Context(), principal.UserID, r.PathValue("petID"), r.PathValue("medicationID"))
+	switch {
+	case errors.Is(err, shopping.ErrInvalid):
+		writeProblem(w, http.StatusBadRequest, "Invalid medication id")
+	case errors.Is(err, shopping.ErrNotFound):
+		writeProblem(w, http.StatusNotFound, "Medication not found")
+	case errors.Is(err, shopping.ErrNotLow):
+		writeProblem(w, http.StatusConflict, "Stock is not below minimum")
+	case err != nil:
+		s.internalError(w, err)
+	default:
+		writeJSON(w, http.StatusOK, preview)
+	}
+}
+func (s *Server) createMedicationShoppingItem(w http.ResponseWriter, r *http.Request) {
+	var input shopping.MedicationRestockInput
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	item, err := s.shopping.CreateMedicationItem(r.Context(), principal.UserID, r.PathValue("petID"), r.PathValue("medicationID"), input)
+	switch {
+	case errors.Is(err, shopping.ErrInvalid):
+		writeProblem(w, http.StatusBadRequest, "Invalid medication id")
+	case errors.Is(err, shopping.ErrNotFound):
+		writeProblem(w, http.StatusNotFound, "Medication or list not found")
+	case errors.Is(err, shopping.ErrDuplicate):
+		writeProblem(w, http.StatusConflict, "Open shopping item already exists")
+	case err != nil:
+		s.internalError(w, err)
+	default:
+		w.Header().Set("Location", "/api/v1/shopping/items/"+item.ID)
+		writeJSON(w, http.StatusCreated, item)
+	}
+}
+func (s *Server) updateMedicationStock(w http.ResponseWriter, r *http.Request) {
+	var input pets.MedicationStockInput
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	item, err := s.pets.UpdateMedicationStock(r.Context(), principal.UserID, r.PathValue("petID"), r.PathValue("medicationID"), input)
+	switch {
+	case errors.Is(err, pets.ErrInvalidMedication):
+		writeProblem(w, http.StatusUnprocessableEntity, "Invalid stock quantity")
+	case errors.Is(err, pets.ErrNotFound):
+		writeProblem(w, http.StatusNotFound, "Medication not found")
+	case err != nil:
+		s.internalError(w, err)
+	default:
+		writeJSON(w, http.StatusOK, item)
+	}
+}
+
+func (s *Server) createReminderAppointment(w http.ResponseWriter, r *http.Request) {
+	var input reminders.AppointmentInput
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	event, err := s.reminders.CreateAppointment(r.Context(), principal.UserID, r.PathValue("sourceID"), input)
+	switch {
+	case errors.Is(err, reminders.ErrInvalid):
+		writeProblem(w, http.StatusUnprocessableEntity, "Invalid appointment")
+	case errors.Is(err, reminders.ErrNotFound):
+		writeProblem(w, http.StatusNotFound, "Reminder source not found")
+	case errors.Is(err, reminders.ErrDuplicate):
+		writeProblem(w, http.StatusConflict, "Appointment already exists")
+	case err != nil:
+		s.internalError(w, err)
+	default:
+		w.Header().Set("Location", "/api/v1/calendar/events/"+event.ID)
+		writeJSON(w, http.StatusCreated, event)
+	}
+}
+
+func (s *Server) getReminderRules(w http.ResponseWriter, r *http.Request) {
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	rules, err := s.reminders.GetRules(r.Context(), principal.UserID)
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rules)
+}
+
+func (s *Server) replaceReminderRules(w http.ResponseWriter, r *http.Request) {
+	var input reminders.Rules
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	rules, err := s.reminders.ReplaceRules(r.Context(), principal.UserID, input)
+	if errors.Is(err, reminders.ErrInvalid) {
+		writeProblem(w, http.StatusUnprocessableEntity, "Invalid reminder rules")
+		return
+	}
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rules)
 }
 
 func (s *Server) petTimeline(w http.ResponseWriter, r *http.Request) {

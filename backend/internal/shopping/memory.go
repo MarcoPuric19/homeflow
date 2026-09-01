@@ -66,3 +66,10 @@ func (r *MemoryRepository) Complete(_ context.Context, itemID, userID string, co
 	r.items[itemID] = item
 	return item, nil
 }
+
+func (r *MemoryRepository) PreviewMedication(context.Context, string, string, string) (MedicationRestockPreview, error) {
+	return MedicationRestockPreview{}, ErrNotFound
+}
+func (r *MemoryRepository) CreateMedicationItem(_ context.Context, _ string, item Item) (Item, error) {
+	return r.Create(context.Background(), "", item)
+}
