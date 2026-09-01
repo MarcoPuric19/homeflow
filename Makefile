@@ -10,7 +10,7 @@ NAMESPACE := homeflow
 
 .DEFAULT_GOAL := help
 
-.PHONY: check-migrations check-resource-contract mirror
+.PHONY: check-migrations check-resource-contract mirror mirror-setup
 .PHONY: help setup fmt fmt-check lint test ci mission-control mission-control-ci mission-control-install mission-control-status mission-control-logs mission-control-stop install-git-hooks frontend-test integration-test build frontend-build frontend-dev run dev down backup verify-backup docker-build docker-push kind-load manifests deploy status logs port-forward monitoring-manifests monitoring-deploy monitoring-status grafana-port-forward prometheus-port-forward grafana-password clean
 
 help: ## Show available commands
@@ -178,3 +178,6 @@ check-resource-contract: ## Check contracts.md 2.1 against the rendered manifest
 
 mirror: ## Push the history to every configured mirror remote (see ADR 0008)
 	@./scripts/mirror-repo.sh
+
+mirror-setup: ## Create the local mirror, register it and install the hooks (one command)
+	@./scripts/mirror-setup.sh

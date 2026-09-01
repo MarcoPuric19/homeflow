@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"homeflow/backend/internal/outbox"
 )
 
 type PostgresRepository struct{ pool *pgxpool.Pool }
@@ -36,15 +37,24 @@ func scanEvent(row pgx.Row) (Event, error) {
 }
 
 func (r *PostgresRepository) Create(ctx context.Context, event Event) (Event, error) {
-	return scanEvent(r.pool.QueryRow(ctx, `INSERT INTO calendar_events
+	return outbox.Run(ctx, r.pool, func(tx pgx.Tx) (Event, error) {
+		created, err := scanEvent(tx.QueryRow(ctx, `INSERT INTO calendar_events
       (id,household_id,title,description,starts_at,ends_at,all_day,category,owner_id,visibility,recurrence_rule,reminder_minutes,status,pet_id,appointment_type,created_at,updated_at)
       SELECT $1,hm.household_id,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),$11,$12,$13,$14,$15,$16
       FROM household_members hm WHERE hm.user_id=$8
         AND ($13::uuid IS NULL OR EXISTS (SELECT 1 FROM pets p WHERE p.id=$13 AND p.household_id=hm.household_id))
       RETURNING `+returnedEventColumns,
-		event.ID, event.Title, event.Description, event.StartsAt, event.EndsAt, event.AllDay,
-		event.Category, event.OwnerID, event.Visibility, event.RecurrenceRule, event.ReminderMinutes,
-		event.Status, event.PetID, event.AppointmentType, event.CreatedAt, event.UpdatedAt))
+			event.ID, event.Title, event.Description, event.StartsAt, event.EndsAt, event.AllDay,
+			event.Category, event.OwnerID, event.Visibility, event.RecurrenceRule, event.ReminderMinutes,
+			event.Status, event.PetID, event.AppointmentType, event.CreatedAt, event.UpdatedAt))
+		if err != nil {
+			return Event{}, err
+		}
+		if created.PetID != nil {
+			err = outbox.WriteForPet(ctx, tx, "appointment.created", "calendar_event", created.ID, *created.PetID, nil)
+		}
+		return created, err
+	})
 }
 
 // ListVisible returns events that overlap the window, not only those starting
@@ -85,7 +95,16 @@ func (r *PostgresRepository) GetVisible(ctx context.Context, userID, eventID str
 // simply not matched, so a foreign private event is indistinguishable from a
 // missing one.
 func (r *PostgresRepository) Update(ctx context.Context, userID string, event Event) (Event, error) {
-	return scanEvent(r.pool.QueryRow(ctx, `UPDATE calendar_events e SET
+	return outbox.Run(ctx, r.pool, func(tx pgx.Tx) (Event, error) {
+		var previous Status
+		err := tx.QueryRow(ctx, `SELECT e.status FROM calendar_events e JOIN household_members hm ON hm.household_id=e.household_id WHERE hm.user_id=$1 AND e.id=$2 AND `+visibleToCaller+` FOR UPDATE`, userID, event.ID).Scan(&previous)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Event{}, ErrNotFound
+		}
+		if err != nil {
+			return Event{}, err
+		}
+		updated, err := scanEvent(tx.QueryRow(ctx, `UPDATE calendar_events e SET
         title=$3, description=$4, starts_at=$5, ends_at=$6, all_day=$7, category=$8,
         visibility=$9, recurrence_rule=NULLIF($10,''), reminder_minutes=$11, status=$12,
         pet_id=$13,appointment_type=$14,updated_at=$15
@@ -93,9 +112,17 @@ func (r *PostgresRepository) Update(ctx context.Context, userID string, event Ev
       WHERE e.id=$2 AND hm.user_id=$1 AND hm.household_id=e.household_id AND `+visibleToCaller+`
         AND ($13::uuid IS NULL OR EXISTS (SELECT 1 FROM pets p WHERE p.id=$13 AND p.household_id=e.household_id))
       RETURNING `+eventColumns,
-		userID, event.ID, event.Title, event.Description, event.StartsAt, event.EndsAt, event.AllDay,
-		event.Category, event.Visibility, event.RecurrenceRule, event.ReminderMinutes, event.Status,
-		event.PetID, event.AppointmentType, event.UpdatedAt))
+			userID, event.ID, event.Title, event.Description, event.StartsAt, event.EndsAt, event.AllDay,
+			event.Category, event.Visibility, event.RecurrenceRule, event.ReminderMinutes, event.Status,
+			event.PetID, event.AppointmentType, event.UpdatedAt))
+		if err != nil {
+			return Event{}, err
+		}
+		if previous != StatusCompleted && updated.Status == StatusCompleted && updated.PetID != nil {
+			err = outbox.WriteForPet(ctx, tx, "appointment.completed", "calendar_event", updated.ID, *updated.PetID, nil)
+		}
+		return updated, err
+	})
 }
 
 func (r *PostgresRepository) Delete(ctx context.Context, userID, eventID string) error {

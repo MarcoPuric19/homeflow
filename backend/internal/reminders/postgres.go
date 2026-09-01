@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"homeflow/backend/internal/calendar"
+	"homeflow/backend/internal/outbox"
 )
 
 type PostgresRepository struct{ pool *pgxpool.Pool }
@@ -69,6 +70,9 @@ func (r *PostgresRepository) CreateAppointment(ctx context.Context, userID, sour
 		return calendar.Event{}, ErrDuplicate
 	}
 	if err != nil {
+		return calendar.Event{}, err
+	}
+	if err = outbox.WriteForPet(ctx, tx, "appointment.created", "calendar_event", event.ID, petID, nil); err != nil {
 		return calendar.Event{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {

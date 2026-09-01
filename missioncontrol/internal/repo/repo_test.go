@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestScopeMatchesTheThreeFormsPeopleWrite(t *testing.T) {
@@ -88,11 +89,16 @@ func TestReadReportsARepositoryWithoutCommits(t *testing.T) {
 	if state.Branch != "main" || state.HasCommit {
 		t.Fatalf("state=%#v", state)
 	}
-	if len(state.Notes) != 2 {
+	// Drei Hinweise: kein Remote, kein Commit, kein Spiegel. Der dritte kam mit
+	// HF-0106 dazu und ist der einzige, der auf eine Gegenmaßnahme zeigt.
+	if len(state.Notes) != 3 {
 		t.Fatalf("hinweise=%v", state.Notes)
 	}
-	if !strings.Contains(strings.Join(state.Notes, " "), "Kein Remote") {
-		t.Fatalf("Remote-Hinweis fehlt: %v", state.Notes)
+	alle := strings.Join(state.Notes, " ")
+	for _, erwartet := range []string{"Kein Remote", "Kein Spiegel", "mirror-setup"} {
+		if !strings.Contains(alle, erwartet) {
+			t.Fatalf("Hinweis auf %q fehlt: %v", erwartet, state.Notes)
+		}
 	}
 	if len(state.Changes) != 2 || state.Changes[0].Status != "ungetrackt" {
 		t.Fatalf("aenderungen=%#v", state.Changes)
@@ -148,8 +154,13 @@ func TestCommitKeysAreReadFromSubjectAndBody(t *testing.T) {
 	if len(commit.Files) != 2 || commit.Files[0] != "backend/internal/auth/auth.go" {
 		t.Fatalf("dateien=%v", commit.Files)
 	}
-	if len(state.Notes) != 0 {
-		t.Fatalf("unerwartete Hinweise: %v", state.Notes)
+	// Ein Remote existiert, aber keines heißt `spiegel*` - das ist kein Spiegel,
+	// und genau das soll dastehen.
+	if len(state.Notes) != 1 || !strings.Contains(state.Notes[0], "Kein Spiegel") {
+		t.Fatalf("hinweise=%v", state.Notes)
+	}
+	if len(state.Mirrors) != 0 {
+		t.Fatalf("`origin` ist kein Spiegel: %#v", state.Mirrors)
 	}
 }
 
@@ -177,5 +188,67 @@ func TestTicketKeyPatternIsStrict(t *testing.T) {
 	found := TicketKey.FindAllString("HF-0042 und MC-0003, aber nicht XX-0001 oder HF-42 oder HF-00423", -1)
 	if len(found) != 2 {
 		t.Fatalf("gefunden=%v", found)
+	}
+}
+
+// A mirror that nobody notices has gone stale is the failure mode this whole
+// feature exists for (ADR 0008): there is no NAS and no second machine here, so
+// the only real redundancy is a stick that spends most of its life unplugged.
+func TestMirrorsReportBehindUnreachableAndMissing(t *testing.T) {
+	head := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		switch {
+		case args[0] == "remote" && len(args) == 1:
+			return []byte("origin\nspiegel-lokal\nspiegel-usb\n"), nil
+		case args[0] == "remote" && args[1] == "get-url":
+			return []byte("/pfad/" + args[2] + ".git\n"), nil
+		case args[0] == "ls-remote" && args[2] == "spiegel-usb":
+			return nil, errors.New("could not read from remote repository")
+		case args[0] == "ls-remote":
+			return []byte(head + "\trefs/heads/main\n"), nil
+		case args[0] == "rev-list":
+			return []byte("3\n"), nil
+		case args[0] == "log":
+			return []byte("2026-08-20T10:00:00+02:00\n"), nil
+		}
+		return nil, errors.New("unexpected: " + strings.Join(args, " "))
+	}
+
+	list := mirrors(context.Background(), run, "main")
+	if len(list) != 2 {
+		t.Fatalf("got %d mirrors, want 2 - `origin` is not a mirror", len(list))
+	}
+	lokal, usb := list[0], list[1]
+	if !lokal.Reachable || lokal.Behind != 3 {
+		t.Fatalf("spiegel-lokal: reachable=%v behind=%d, want true/3", lokal.Reachable, lokal.Behind)
+	}
+	if lokal.At.IsZero() {
+		t.Fatal("spiegel-lokal has no timestamp for its newest mirrored commit")
+	}
+	if usb.Reachable {
+		t.Fatal("an unmounted stick must read as unreachable, not as up to date")
+	}
+
+	notes := mirrorNotes(list)
+	if len(notes) != 2 {
+		t.Fatalf("notes = %#v, want one for behind and one for unreachable", notes)
+	}
+
+	if got := mirrorNotes(nil); len(got) != 1 || !strings.Contains(got[0], "Kein Spiegel") {
+		t.Fatalf("no mirror at all must say so plainly, got %#v", got)
+	}
+}
+
+// The near mirror shares a disk with the working tree. Saying "up to date" and
+// stopping there would sell it as something it is not.
+func TestSingleLocalMirrorIsNotSoldAsRedundancy(t *testing.T) {
+	list := []Mirror{{Name: "spiegel-lokal", Reachable: true, Behind: 0, At: time.Now()}}
+	notes := mirrorNotes(list)
+	if len(notes) != 1 || !strings.Contains(notes[0], "derselben Platte") {
+		t.Fatalf("notes = %#v, want the warning that one local mirror is not redundancy", notes)
+	}
+	zwei := append(list, Mirror{Name: "spiegel-usb", Reachable: true, Behind: 0, At: time.Now()})
+	if got := mirrorNotes(zwei); len(got) != 0 {
+		t.Fatalf("two healthy mirrors need no note, got %#v", got)
 	}
 }

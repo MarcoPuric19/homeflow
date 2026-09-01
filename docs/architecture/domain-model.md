@@ -143,7 +143,13 @@ OCR suggestions will be separate, untrusted records requiring confirmation.
 
 ## Domain events
 
-Events use stable names such as `shopping.item.added`,
-`shopping.item.completed`, `calendar.event.created`, `expense.created`,
-`expense.due`, `expense.paid`, `receipt.uploaded` and `receipt.processed`.
-Payloads are versioned and must not contain secrets.
+Pet workflows transactionally append version-1 events to `event_outbox` using
+the stable names `pet.created`, `pet.updated`, `pet.weight.recorded`,
+`medical_record.created`, `vaccination.recorded`, `appointment.created`,
+`appointment.completed`, `medication.started`, `medication.stopped`,
+`medication.stock.low`, `pet_shopping_item.created`, `pet_expense.created`,
+`pet_budget.threshold.reached` and `receipt.attached`. Every payload contains
+only stable household/pet correlation plus identifiers needed for routing; it
+must not contain names, notes, medical values, filenames, document bytes or
+secrets. Event creation and the corresponding domain write share one database
+transaction. No publisher is currently attached to the outbox.

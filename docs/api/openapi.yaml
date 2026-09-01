@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: HomeFlow API
-  version: 0.15.10
+  version: 0.15.11
   description: Private, local-first household API. No public registration exists.
 servers:
   - url: http://localhost:8080

@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"homeflow/backend/internal/outbox"
 )
 
 type PostgresRepository struct{ pool *pgxpool.Pool }
@@ -15,13 +16,26 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 }
 
 func (r *PostgresRepository) Create(ctx context.Context, receipt Receipt) (Receipt, error) {
-	err := r.pool.QueryRow(ctx, `INSERT INTO receipts
+	return outbox.Run(ctx, r.pool, func(tx pgx.Tx) (Receipt, error) {
+		err := tx.QueryRow(ctx, `INSERT INTO receipts
       (id,expense_id,merchant,receipt_date,total_amount_cents,currency,category,original_filename,mime_type,sha256,storage_key,uploaded_at,uploaded_by)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
       RETURNING uploaded_at`, receipt.ID, receipt.ExpenseID, receipt.Merchant, receipt.ReceiptDate,
-		receipt.TotalAmountCents, receipt.Currency, receipt.Category, receipt.OriginalFilename,
-		receipt.MIMEType, receipt.SHA256, receipt.StorageKey, receipt.UploadedAt, receipt.UploadedBy).Scan(&receipt.UploadedAt)
-	return receipt, err
+			receipt.TotalAmountCents, receipt.Currency, receipt.Category, receipt.OriginalFilename,
+			receipt.MIMEType, receipt.SHA256, receipt.StorageKey, receipt.UploadedAt, receipt.UploadedBy).Scan(&receipt.UploadedAt)
+		if err != nil {
+			return Receipt{}, err
+		}
+		var householdID string
+		var petID *string
+		if err := tx.QueryRow(ctx, `SELECT household_id::text,pet_id::text FROM expenses WHERE id=$1`, receipt.ExpenseID).Scan(&householdID, &petID); err != nil {
+			return Receipt{}, err
+		}
+		if petID != nil {
+			err = outbox.Write(ctx, tx, "receipt.attached", "receipt", receipt.ID, map[string]any{"householdId": householdID, "petId": *petID, "expenseId": receipt.ExpenseID})
+		}
+		return receipt, err
+	})
 }
 
 func (r *PostgresRepository) ListForExpense(ctx context.Context, expenseID string) ([]Receipt, error) {

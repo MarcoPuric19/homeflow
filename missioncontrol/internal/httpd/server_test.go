@@ -441,8 +441,11 @@ func TestRepositoryLinksTicketsToFilesAndCommits(t *testing.T) {
 	if payload.Branch != "main" || !payload.HatCommits {
 		t.Fatalf("payload=%#v", payload)
 	}
-	// Ohne Remote muss der Hinweis stehen - das ist P3-4.
-	if len(payload.Hinweise) != 1 || !strings.Contains(payload.Hinweise[0], "Remote") {
+	// Ohne Remote muss der Hinweis stehen - das ist P3-4. Seit HF-0106 kommt der
+	// fehlende Spiegel dazu: beides beschreibt dieselbe Lage, aber nur der
+	// zweite nennt die Gegenmaßnahme.
+	alle := strings.Join(payload.Hinweise, " ")
+	if len(payload.Hinweise) != 2 || !strings.Contains(alle, "Remote") || !strings.Contains(alle, "Spiegel") {
 		t.Fatalf("hinweise=%v", payload.Hinweise)
 	}
 

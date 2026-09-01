@@ -1,4 +1,4 @@
-# ADR 0007: Pet budget warnings use fixed minor currency units
+# ADR 0009: Pet budget warnings use fixed minor currency units
 
 - Status: Accepted
 - Date: 2026-09-01

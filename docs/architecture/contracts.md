@@ -97,6 +97,9 @@ Seit Version 0.15.10 tragen Pet-Monatsbudgets optional eine feste lokale
 Warnschwelle in Integer-Cents sowie Notizen. Monats- und Jahresauswertungen
 liefern das verbleibende Budget und den serverseitig berechneten Warnzustand;
 maßgeblich sind tatsächlich bezahlte Ausgaben, nicht offene Planwerte.
+Seit Version 0.15.11 schreiben Pet-Zustandswechsel ihre versionierten,
+minimalen Domain Events atomar mit der Domänenänderung in `event_outbox`.
+Die Outbox bleibt lokal; ein Publisher oder Broker ist nicht enthalten.
 
 ### 1.2 Metriknamen
 

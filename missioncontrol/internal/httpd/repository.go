@@ -116,7 +116,7 @@ func (s *Server) repository(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"branch": state.Branch, "remote": state.Remote, "hatCommits": state.HasCommit,
 		"hinweise": state.Notes, "commits": state.Commits,
-		"aenderungen": changes, "tickets": links,
+		"aenderungen": changes, "tickets": links, "spiegel": state.Mirrors,
 	})
 }
 

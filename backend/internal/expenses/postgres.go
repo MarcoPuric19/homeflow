@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"homeflow/backend/internal/outbox"
 )
 
 type PostgresRepository struct{ pool *pgxpool.Pool }
@@ -29,19 +30,27 @@ func scanExpense(row pgx.Row) (Expense, error) {
 }
 
 func (r *PostgresRepository) Create(ctx context.Context, userID string, expense Expense) (Expense, error) {
-	created, err := scanExpense(r.pool.QueryRow(ctx, `INSERT INTO expenses AS e
+	return outbox.Run(ctx, r.pool, func(tx pgx.Tx) (Expense, error) {
+		created, err := scanExpense(tx.QueryRow(ctx, `INSERT INTO expenses AS e
       (id,household_id,description,merchant,planned_amount_cents,currency,due_date,category,recurrence_rule,status,user_id,payment_method,notes,pet_id,budget_category,created_at,updated_at)
       SELECT $2,hm.household_id,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12,$13,$14,$15,$16,$17
       FROM household_members hm
       WHERE hm.user_id=$1 AND ($14::uuid IS NULL OR EXISTS(SELECT 1 FROM pets p WHERE p.id=$14 AND p.household_id=hm.household_id))
       RETURNING `+expenseColumns, userID, expense.ID, expense.Description, expense.Merchant,
-		expense.PlannedAmountCents, expense.Currency, expense.DueDate, expense.Category,
-		expense.RecurrenceRule, expense.Status, expense.UserID, expense.PaymentMethod, expense.Notes,
-		expense.PetID, expense.BudgetCategory, expense.CreatedAt, expense.UpdatedAt))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Expense{}, ErrNotFound
-	}
-	return created, err
+			expense.PlannedAmountCents, expense.Currency, expense.DueDate, expense.Category,
+			expense.RecurrenceRule, expense.Status, expense.UserID, expense.PaymentMethod, expense.Notes,
+			expense.PetID, expense.BudgetCategory, expense.CreatedAt, expense.UpdatedAt))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Expense{}, ErrNotFound
+		}
+		if err != nil {
+			return Expense{}, err
+		}
+		if created.PetID != nil {
+			err = outbox.WriteForPet(ctx, tx, "pet_expense.created", "expense", created.ID, *created.PetID, nil)
+		}
+		return created, err
+	})
 }
 
 func (r *PostgresRepository) List(ctx context.Context, userID, month, petID string, limit int) ([]Expense, error) {
@@ -65,23 +74,36 @@ func (r *PostgresRepository) List(ctx context.Context, userID, month, petID stri
 }
 
 func (r *PostgresRepository) MarkPaid(ctx context.Context, expenseID, userID string, amount int64, paidAt time.Time) (Expense, error) {
-	expense, err := scanExpense(r.pool.QueryRow(ctx, `UPDATE expenses e SET actual_amount_cents=$2,paid_at=$3,status='paid',updated_at=$3
+	return outbox.Run(ctx, r.pool, func(tx pgx.Tx) (Expense, error) {
+		expense, err := scanExpense(tx.QueryRow(ctx, `UPDATE expenses e SET actual_amount_cents=$2,paid_at=$3,status='paid',updated_at=$3
 	  WHERE e.id=$1 AND e.status IN ('planned','open') AND e.household_id IN
 	  (SELECT household_id FROM household_members WHERE user_id=$4) RETURNING `+expenseColumns, expenseID, amount, paidAt, userID))
-	if err == nil {
-		return expense, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return Expense{}, err
-	}
-	var exists bool
-	if err := r.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM expenses e JOIN household_members hm ON hm.household_id=e.household_id WHERE e.id=$1 AND hm.user_id=$2)`, expenseID, userID).Scan(&exists); err != nil {
-		return Expense{}, err
-	}
-	if !exists {
-		return Expense{}, ErrNotFound
-	}
-	return Expense{}, ErrConflict
+		if err == nil {
+			if expense.PetID != nil && expense.BudgetCategory != "" {
+				var budgetID string
+				var reachedBefore, reachedNow bool
+				err = tx.QueryRow(ctx, `SELECT b.id::text,b.amount_cents-(COALESCE(sum(e.actual_amount_cents) FILTER (WHERE e.status='paid'),0)-$4) <= b.warning_threshold_cents,b.amount_cents-COALESCE(sum(e.actual_amount_cents) FILTER (WHERE e.status='paid'),0) <= b.warning_threshold_cents FROM pet_budgets b LEFT JOIN expenses e ON e.household_id=b.household_id AND e.pet_id=b.pet_id AND COALESCE(NULLIF(e.budget_category,''),NULLIF(e.category,''),'Unkategorisiert')=b.category AND date_trunc('month',e.due_date)=b.month WHERE b.pet_id=$1 AND b.month=date_trunc('month',$2::date) AND b.category=$3 AND b.warning_threshold_cents IS NOT NULL GROUP BY b.id,b.amount_cents,b.warning_threshold_cents`, *expense.PetID, expense.DueDate, expense.BudgetCategory, amount).Scan(&budgetID, &reachedBefore, &reachedNow)
+				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+					return Expense{}, err
+				}
+				if err == nil && !reachedBefore && reachedNow {
+					err = outbox.WriteForPet(ctx, tx, "pet_budget.threshold.reached", "pet_budget", budgetID, *expense.PetID, nil)
+				}
+			}
+			return expense, err
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return Expense{}, err
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM expenses e JOIN household_members hm ON hm.household_id=e.household_id WHERE e.id=$1 AND hm.user_id=$2)`, expenseID, userID).Scan(&exists); err != nil {
+			return Expense{}, err
+		}
+		if !exists {
+			return Expense{}, ErrNotFound
+		}
+		return Expense{}, ErrConflict
+	})
 }
 
 func (r *PostgresRepository) MonthlySummary(ctx context.Context, userID, month string) (MonthlySummary, error) {

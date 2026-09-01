@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"homeflow/backend/internal/outbox"
 	"time"
 )
 
@@ -82,6 +83,9 @@ func (r *PostgresRepository) CreateMedicationItem(ctx context.Context, userID st
 	if err != nil {
 		return Item{}, err
 	}
+	if err := outbox.Write(ctx, tx, "pet_shopping_item.created", "shopping_item", created.ID, map[string]any{"householdId": householdID, "petId": created.PetIDs[0], "petIds": created.PetIDs}); err != nil {
+		return Item{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return Item{}, err
 	}
@@ -123,6 +127,11 @@ func (r *PostgresRepository) Create(ctx context.Context, userID string, item Ite
 	created, err := scanItem(tx.QueryRow(ctx, `SELECT `+itemColumns+` FROM shopping_items i WHERE i.id=$1`, item.ID))
 	if err != nil {
 		return Item{}, err
+	}
+	if len(created.PetIDs) > 0 {
+		if err := outbox.Write(ctx, tx, "pet_shopping_item.created", "shopping_item", created.ID, map[string]any{"householdId": householdID, "petId": created.PetIDs[0], "petIds": created.PetIDs}); err != nil {
+			return Item{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Item{}, err

@@ -317,6 +317,13 @@ func (r *PostgresRepository) CreatePetMedication(ctx context.Context, userID, cr
 	if err != nil {
 		return PetMedication{}, err
 	}
+	eventName := "medication.started"
+	if !created.Active {
+		eventName = "medication.stopped"
+	}
+	if err := outbox.WriteForPet(ctx, tx, eventName, "pet_medication", created.ID, created.PetID, nil); err != nil {
+		return PetMedication{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return PetMedication{}, err
 	}
@@ -346,15 +353,43 @@ func (r *PostgresRepository) ListPetMedications(ctx context.Context, userID, pet
 }
 
 func (r *PostgresRepository) UpdateMedicationStock(ctx context.Context, userID, petID, medicationID, value string, at time.Time) (PetMedication, error) {
-	return scanPetMedication(r.pool.QueryRow(ctx, `UPDATE pet_medications pm SET stock_quantity=$4::numeric,updated_at=$5 FROM medications m,household_members hm WHERE pm.id=$3 AND pm.pet_id=$2 AND m.id=pm.medication_id AND m.household_id=pm.household_id AND hm.user_id=$1 AND hm.household_id=pm.household_id RETURNING `+petMedicationColumns, userID, petID, medicationID, value, at))
+	return outbox.Run(ctx, r.pool, func(tx pgx.Tx) (PetMedication, error) {
+		var wasLow bool
+		err := tx.QueryRow(ctx, `SELECT pm.minimum_stock IS NOT NULL AND pm.stock_quantity<pm.minimum_stock FROM pet_medications pm JOIN household_members hm ON hm.household_id=pm.household_id WHERE hm.user_id=$1 AND pm.pet_id=$2 AND pm.id=$3 FOR UPDATE`, userID, petID, medicationID).Scan(&wasLow)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return PetMedication{}, ErrNotFound
+		}
+		if err != nil {
+			return PetMedication{}, err
+		}
+		updated, err := scanPetMedication(tx.QueryRow(ctx, `UPDATE pet_medications pm SET stock_quantity=$4::numeric,updated_at=$5 FROM medications m,household_members hm WHERE pm.id=$3 AND pm.pet_id=$2 AND m.id=pm.medication_id AND m.household_id=pm.household_id AND hm.user_id=$1 AND hm.household_id=pm.household_id RETURNING `+petMedicationColumns, userID, petID, medicationID, value, at))
+		if err != nil {
+			return PetMedication{}, err
+		}
+		if updated.MinimumStock != nil {
+			var low bool
+			if err := tx.QueryRow(ctx, `SELECT $1::numeric < $2::numeric`, updated.StockQuantity, *updated.MinimumStock).Scan(&low); err != nil {
+				return PetMedication{}, err
+			}
+			if !wasLow && low {
+				err = outbox.WriteForPet(ctx, tx, "medication.stock.low", "pet_medication", updated.ID, updated.PetID, nil)
+			}
+		}
+		return updated, err
+	})
 }
 
 func (r *PostgresRepository) CreateWeight(ctx context.Context, userID, createdBy string, e WeightEntry) (WeightEntry, error) {
-	err := r.pool.QueryRow(ctx, `INSERT INTO weight_entries(id,household_id,pet_id,measured_on,weight_kg,notes,created_by,created_at) SELECT $3,p.household_id,p.id,$4::date,$5::numeric,$6,$7,$8 FROM pets p JOIN household_members hm ON hm.household_id=p.household_id WHERE hm.user_id=$1 AND p.id=$2 RETURNING id::text,pet_id::text,measured_on::text,weight_kg::text,notes,created_at`, userID, e.PetID, e.ID, e.MeasuredOn, e.WeightKg, e.Notes, createdBy, e.CreatedAt).Scan(&e.ID, &e.PetID, &e.MeasuredOn, &e.WeightKg, &e.Notes, &e.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return WeightEntry{}, ErrNotFound
-	}
-	return e, err
+	return outbox.Run(ctx, r.pool, func(tx pgx.Tx) (WeightEntry, error) {
+		err := tx.QueryRow(ctx, `INSERT INTO weight_entries(id,household_id,pet_id,measured_on,weight_kg,notes,created_by,created_at) SELECT $3,p.household_id,p.id,$4::date,$5::numeric,$6,$7,$8 FROM pets p JOIN household_members hm ON hm.household_id=p.household_id WHERE hm.user_id=$1 AND p.id=$2 RETURNING id::text,pet_id::text,measured_on::text,weight_kg::text,notes,created_at`, userID, e.PetID, e.ID, e.MeasuredOn, e.WeightKg, e.Notes, createdBy, e.CreatedAt).Scan(&e.ID, &e.PetID, &e.MeasuredOn, &e.WeightKg, &e.Notes, &e.CreatedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return WeightEntry{}, ErrNotFound
+		}
+		if err != nil {
+			return WeightEntry{}, err
+		}
+		return e, outbox.WriteForPet(ctx, tx, "pet.weight.recorded", "weight_entry", e.ID, e.PetID, nil)
+	})
 }
 func (r *PostgresRepository) ListWeights(ctx context.Context, userID, petID string, limit int) ([]WeightEntry, error) {
 	if _, err := r.Get(ctx, userID, petID); err != nil {

@@ -699,6 +699,29 @@ async function loadTickets() {
 // The repository view is the join: which ticket owns which files, and which
 // commit belongs to which ticket. Both directions matter - one catches
 // collisions before they happen, the other says what was actually done.
+// Ein Spiegel hat drei Zustände, die man nicht verwechseln darf: nicht
+// erreichbar (Datenträger nicht eingehängt), erreichbar aber im Rückstand, und
+// aktuell. Nur der dritte ist eine Sicherung.
+function mirrorRow(m) {
+  const alter = m.stand ? Math.floor((Date.now() - new Date(m.stand)) / 86400000) : null;
+  let zustand, klasse;
+  if (!m.erreichbar) {
+    zustand = "nicht erreichbar";
+    klasse = "mirror-bad";
+  } else if (m.rueckstand > 0) {
+    zustand = m.rueckstand + " Commit(s) zurück";
+    klasse = "mirror-warn";
+  } else {
+    zustand = "aktuell";
+    klasse = "mirror-ok";
+  }
+  return el("div", { class: "mirror " + klasse },
+    el("span", { class: "mirror-name", title: m.url || "" }, m.name),
+    el("span", { class: "mirror-state" }, zustand),
+    el("span", { class: "mirror-age" },
+      alter === null ? "" : alter === 0 ? "heute" : "vor " + alter + " Tag(en)"));
+}
+
 async function loadRepo() {
   try {
     const data = await api("/api/repo");
@@ -711,6 +734,18 @@ async function loadRepo() {
         fact("Commits", data.hatCommits ? String(data.commits.length) : "0"),
         fact("Unversionierte Änderungen", String((data.aenderungen ?? []).length))),
       ...(data.hinweise ?? []).map((note) => el("p", { class: "repo-note" }, note)));
+
+      // Spiegeln ist nicht das Problem. Zu merken, dass es seit Wochen nicht
+      // passiert ist, schon - deshalb steht der Rückstand hier und nicht in
+      // einer Skriptausgabe, die niemand aufruft (ADR 0008, HF-0106).
+      const spiegel = data.spiegel ?? [];
+      const spiegelCard = el("section", { class: "card" },
+        el("h2", {}, "Spiegel"),
+        spiegel.length
+          ? el("div", { class: "mirror-list" }, ...spiegel.map(mirrorRow))
+          : el("p", { class: "hint" },
+              "Keiner eingerichtet. Die Historie liegt genau einmal, auf dieser Platte. "
+              + "„make mirror-setup“ legt den lokalen Spiegel an."));
 
     const conflicts = (data.tickets ?? []).filter((t) => (t.kollisionen ?? []).length);
     const conflictCard = conflicts.length
@@ -749,7 +784,8 @@ async function loadRepo() {
         el("span", { class: "st" }, change.status), " ", change.pfad)),
       ...(orphans.length > 40 ? [el("p", { class: "hint" }, "… und " + (orphans.length - 40) + " weitere")] : []));
 
-    target.replaceChildren(head, ...(conflictCard ? [conflictCard] : []), ticketCard, orphanCard);
+    target.replaceChildren(head, spiegelCard, ...(conflictCard ? [conflictCard] : []),
+      ticketCard, orphanCard);
   } catch (error) {
     banner(error.message);
   }

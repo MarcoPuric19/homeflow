@@ -166,6 +166,21 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 	if err != nil || petSummary.Categories[0].RemainingBudgetCents != 3000 || !petSummary.Categories[0].WarningThresholdReached {
 		t.Fatalf("threshold summary=%#v err=%v", petSummary, err)
 	}
+	receiptService := receipts.NewService(receipts.NewPostgresRepository(pool), expenseService, documentStorage)
+	receiptFile, err := os.CreateTemp(t.TempDir(), "pet-receipt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiptFile.Close()
+	if _, err := receiptFile.Write([]byte("%PDF-1.7\npet receipt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receiptFile.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := receiptService.Upload(ctx, petExpense.ID, alice, receiptFile, "Tierarzt.pdf", receipts.Metadata{}); err != nil {
+		t.Fatal(err)
+	}
 	yearlyThreshold := int64(1000)
 	if _, err := expenseService.UpsertBudget(ctx, alice, created.ID, expenses.BudgetInput{Month: "2026-10", Category: "Tierarzt", AmountCents: 5000, WarningThresholdCents: &yearlyThreshold}); err != nil {
 		t.Fatal(err)
@@ -294,6 +309,9 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 	if err != nil || len(foreignAppointments) != 0 {
 		t.Fatalf("foreign appointments=%#v err=%v", foreignAppointments, err)
 	}
+	if _, err := calendarService.Update(ctx, alice, appointment.ID, calendar.EventInput{Title: appointment.Title, StartsAt: appointment.StartsAt, EndsAt: appointment.EndsAt, Visibility: appointment.Visibility, Status: calendar.StatusCompleted, PetID: appointment.PetID, AppointmentType: appointment.AppointmentType}); err != nil {
+		t.Fatal(err)
+	}
 	linkService := links.NewService(links.NewPostgresRepository(pool))
 	documentLinks, err := linkService.ReplaceDocument(ctx, alice, created.ID, document.ID, links.Set{MedicalRecordIDs: []string{first.ID}, AppointmentIDs: []string{appointment.ID}})
 	if err != nil || len(documentLinks.MedicalRecordIDs) != 1 || len(documentLinks.AppointmentIDs) != 1 {
@@ -314,6 +332,10 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 	if err != nil || medication.StockQuantity != "12.500" {
 		t.Fatalf("medication=%#v err=%v", medication, err)
 	}
+	inactive := false
+	if _, err := service.CreatePetMedication(ctx, alice, created.ID, pets.PetMedicationInput{Name: "Abgesetztes Mittel", DoseText: "beendet", FrequencyText: "keine", StartsOn: "2026-08-01", StockQuantity: "0", Active: &inactive}); err != nil {
+		t.Fatal(err)
+	}
 	medications, err := service.ListPetMedications(ctx, alice, created.ID, false, 100)
 	if err != nil || len(medications.Medications) != 1 || medications.Medications[0].MinimumStock == nil || *medications.Medications[0].MinimumStock != "5.000" {
 		t.Fatalf("medications=%#v err=%v", medications, err)
@@ -328,6 +350,13 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 	}
 	if _, err := service.UpdateMedicationStock(ctx, alice, created.ID, medication.ID, pets.MedicationStockInput{StockQuantity: "2.000"}); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := service.UpdateMedicationStock(ctx, alice, created.ID, medication.ID, pets.MedicationStockInput{StockQuantity: "1.000"}); err != nil {
+		t.Fatal(err)
+	}
+	var lowEvents int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM event_outbox WHERE event_name='medication.stock.low' AND aggregate_id=$1`, medication.ID).Scan(&lowEvents); err != nil || lowEvents != 1 {
+		t.Fatalf("low events=%d err=%v", lowEvents, err)
 	}
 	preview, err := shoppingService.PreviewMedication(ctx, alice, created.ID, medication.ID)
 	if err != nil || preview.MinimumStock != "5.000" {
@@ -392,6 +421,57 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 	foreignItems, err := shoppingService.List(ctx, bob, "shared", true, "", 100)
 	if err != nil || len(foreignItems) != 0 {
 		t.Fatalf("foreign items=%#v err=%v", foreignItems, err)
+	}
+	wantedEvents := map[string]bool{
+		"pet.created": false, "pet.updated": false, "pet.weight.recorded": false,
+		"medical_record.created": false, "vaccination.recorded": false,
+		"appointment.created": false, "appointment.completed": false,
+		"medication.started": false, "medication.stopped": false, "medication.stock.low": false,
+		"pet_shopping_item.created": false, "pet_expense.created": false,
+		"pet_budget.threshold.reached": false, "receipt.attached": false,
+	}
+	rows, err := pool.Query(ctx, `SELECT event_name,event_version,payload::text FROM event_outbox ORDER BY occurred_at,id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name, payload string
+		var version int
+		if err := rows.Scan(&name, &version, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if _, expected := wantedEvents[name]; !expected {
+			t.Fatalf("unexpected event %q", name)
+		}
+		if version != 1 || !strings.Contains(payload, `"householdId"`) || !strings.Contains(payload, `"petId"`) {
+			t.Fatalf("event=%s version=%d payload=%s", name, version, payload)
+		}
+		if strings.Contains(payload, "Momo") || strings.Contains(payload, "Tierarzt.pdf") || strings.Contains(payload, "laut Tierarzt") {
+			t.Fatalf("private text leaked in event %s: %s", name, payload)
+		}
+		wantedEvents[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for name, seen := range wantedEvents {
+		if !seen {
+			t.Errorf("missing event %s", name)
+		}
+	}
+	if _, err := pool.Exec(ctx, `ALTER TABLE event_outbox ADD CONSTRAINT event_outbox_test_reject_pet_created CHECK(event_name <> 'pet.created') NOT VALID`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Create(ctx, alice, pets.Input{Name: "Rollback", Species: "Katze"}); err == nil {
+		t.Fatal("pet creation succeeded despite rejected outbox event")
+	}
+	var rolledBack int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pets WHERE name='Rollback'`).Scan(&rolledBack); err != nil || rolledBack != 0 {
+		t.Fatalf("rolled back pets=%d err=%v", rolledBack, err)
+	}
+	if _, err := pool.Exec(ctx, `ALTER TABLE event_outbox DROP CONSTRAINT event_outbox_test_reject_pet_created`); err != nil {
+		t.Fatal(err)
 	}
 }
 
