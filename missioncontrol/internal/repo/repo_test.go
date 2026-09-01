@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -99,23 +100,48 @@ func TestReadReportsARepositoryWithoutCommits(t *testing.T) {
 }
 
 func TestReadParsesCommitsAndTheirTicketKeys(t *testing.T) {
-	log := strings.Join([]string{"abc123def456", "abc123d", "Marco", "2026-09-02T10:00:00+02:00",
-		"HF-0042 Rollen wirksam machen", "Siehe auch MC-0003.\n\nbackend/internal/auth/auth.go\nbackend/internal/httpapi/server.go"}, "\x1f") + "\x1e"
+	// Die Vorlage stammt aus echtem `git log` dieses Repos, nicht aus einer
+	// Annahme darüber, wie git ausgibt. Die erste Fassung dieses Tests war
+	// selbst gebastelt und hat den Fehler durchgewinkt, den der erste Commit
+	// dann zeigte: 15 statt 300 Dateien.
+	raw, err := os.ReadFile("testdata/gitlog-echt.txt")
+	if err != nil {
+		t.Skipf("Vorlage fehlt: %v", err)
+	}
 	state := Read(context.Background(), fakeGit(map[string]string{
-		"rev-parse": "main\n", "remote": "origin\n", "log": log, "status": "",
+		"rev-parse": "main\n", "remote": "", "log": string(raw), "status": "",
 	}), 10)
 
 	if !state.HasCommit || len(state.Commits) != 1 {
-		t.Fatalf("commits=%#v", state.Commits)
+		t.Fatalf("commits=%d", len(state.Commits))
 	}
 	commit := state.Commits[0]
-	if commit.Short != "abc123d" || commit.Author != "Marco" {
+	if commit.Short == "" || commit.Author == "" || commit.At.IsZero() {
 		t.Fatalf("commit=%#v", commit)
 	}
-	if commit.At.Year() != 2026 || commit.At.Day() != 2 {
-		t.Fatalf("zeit=%v", commit.At)
+	// Eine mehrzeilige Nachricht mit Absätzen darf die Dateiliste nicht kürzen.
+	if len(commit.Files) < 200 {
+		t.Fatalf("nur %d Dateien erkannt - die Nachricht hat die Liste verschluckt", len(commit.Files))
 	}
-	// Schlüssel aus Betreff *und* Rumpf, ohne Dubletten.
+	for _, file := range commit.Files {
+		if strings.ContainsAny(file, "\x1e\x1f") || strings.HasPrefix(file, " ") {
+			t.Fatalf("kaputter Dateiname: %q", file)
+		}
+	}
+	// Der Ticketschlüssel steht im Rumpf, nicht im Betreff.
+	if len(commit.Tickets) != 1 || commit.Tickets[0] != "HF-0010" {
+		t.Fatalf("tickets=%v", commit.Tickets)
+	}
+}
+
+func TestCommitKeysAreReadFromSubjectAndBody(t *testing.T) {
+	log := "\x1eabc123def456\x1fabc123d\x1fMarco\x1f2026-09-02T10:00:00+02:00\x1f" +
+		"HF-0042 Rollen wirksam machen\x1fSiehe auch MC-0003.\n\nZweiter Absatz.\n\x1f" +
+		"\nbackend/internal/auth/auth.go\nbackend/internal/httpapi/server.go\n"
+	state := Read(context.Background(), fakeGit(map[string]string{
+		"rev-parse": "main\n", "remote": "origin\n", "log": log, "status": "",
+	}), 10)
+	commit := state.Commits[0]
 	if len(commit.Tickets) != 2 || commit.Tickets[0] != "HF-0042" || commit.Tickets[1] != "MC-0003" {
 		t.Fatalf("tickets=%v", commit.Tickets)
 	}

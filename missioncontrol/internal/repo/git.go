@@ -101,7 +101,14 @@ func Read(ctx context.Context, run Runner, limit int) State {
 }
 
 func commits(ctx context.Context, run Runner, limit int) []Commit {
-	format := strings.Join([]string{"%H", "%h", "%an", "%aI", "%s", "%b"}, fieldSeparator) + commitSeparator
+	// The separator goes at the *front*: git prints the format first and the
+	// --name-only file list after it, so a separator at the end would put every
+	// commit's files into the next block. And the body needs a closing field
+	// separator, because a message with blank lines would otherwise swallow the
+	// list. The first commit of this repository had exactly that shape and was
+	// reported with 15 of 300 files.
+	format := commitSeparator + strings.Join([]string{"%H", "%h", "%an", "%aI", "%s", "%b"}, fieldSeparator) +
+		fieldSeparator
 	out, err := run(ctx, "log", "--max-count="+strconv.Itoa(limit), "--name-only", "--format="+format)
 	if err != nil {
 		return nil
@@ -112,11 +119,11 @@ func commits(ctx context.Context, run Runner, limit int) []Commit {
 		if block == "" {
 			continue
 		}
-		parts := strings.SplitN(block, fieldSeparator, 6)
-		if len(parts) < 6 {
+		parts := strings.SplitN(block, fieldSeparator, 7)
+		if len(parts) < 7 {
 			continue
 		}
-		body, files, _ := strings.Cut(parts[5], "\n\n")
+		body, files := parts[5], parts[6]
 		commit := Commit{Hash: parts[0], Short: parts[1], Author: parts[2], Subject: parts[4]}
 		commit.At, _ = time.Parse(time.RFC3339, parts[3])
 		for _, match := range TicketKey.FindAllString(parts[4]+" "+body, -1) {

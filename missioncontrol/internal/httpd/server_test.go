@@ -390,8 +390,10 @@ func TestRepositoryLinksTicketsToFilesAndCommits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	log := strings.Join([]string{"abc123def", "abc123d", "Marco", "2026-09-02T10:00:00+02:00",
-		claimed.Key + " Pets aufgeräumt", "\n\nbackend/internal/pets/service.go"}, "\x1f") + "\x1e"
+	// Aufbau wie echtes `git log`: Trennzeichen vorn, Dateiliste nach dem Rumpf.
+	log := "\x1e" + strings.Join([]string{"abc123def", "abc123d", "Marco", "2026-09-02T10:00:00+02:00",
+		claimed.Key + " Pets aufgeräumt", "Mit Absatz.\n\nUnd noch einem.\n"}, "\x1f") +
+		"\x1f\nbackend/internal/pets/service.go\n"
 	server.git = func(_ context.Context, args ...string) ([]byte, error) {
 		switch args[0] {
 		case "rev-parse":
