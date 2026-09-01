@@ -828,6 +828,7 @@ async function loadDeploy() {
         `Nur gegen den lokalen Cluster „${data.cluster}“. Mission Control führt ausschließlich diese make-Ziele aus - keine freien Kommandos. Ein Ablauf startet nur, wenn sich dadurch wirklich etwas ändert.`),
       ...data.pipelines.map((pipeline) => {
         const check = checks[pipeline.name] ?? {};
+          const stand = (data.stand ?? []).find((s) => s.pipeline === pipeline.name) ?? {};
         const changes = check.aenderungen ?? [];
         // Gesperrt wird nur, was ein laufendes System verändert. Ein Ablauf,
         // der bloß prüft und baut, kostet zwanzig Sekunden und richtet keinen
@@ -837,6 +838,21 @@ async function loadDeploy() {
         const button = el("button", { class: pipeline.brauchtCluster ? "primary" : "quiet" },
           running ? "läuft …" : blocked ? "nichts zu tun" : pipeline.titel);
         if (running || blocked) button.setAttribute("disabled", "disabled");
+          // Was laeuft gerade, und worauf ginge ein Rueckfall? Beides weiss
+          // seit MC-0018 das Deploy-Journal und ueberlebt einen Neustart des
+          // Cockpits. Ohne zweiten Eintrag steht hier nichts - eine
+          // Rueckfall-Anzeige ohne Ziel waere ein Versprechen (HF-0104).
+          const standZeile = stand.aktuell
+            ? el("div", { class: "deploy-stand" },
+                el("span", {}, "ausgeliefert: "),
+                el("b", {}, stand.aktuell.version || "ohne Version"),
+                el("span", { class: "dim" },
+                  " am " + new Date(stand.aktuell.zeit).toLocaleString("de-DE")),
+                ...(stand.rueckfall
+                  ? [el("span", { class: "dim" }, " · zurueck auf "),
+                     el("code", {}, stand.rueckfall.version || stand.rueckfall.commit.slice(0, 8))]
+                  : [el("span", { class: "dim" }, " · kein Rueckfallziel")]))
+            : el("div", { class: "deploy-stand dim" }, "noch nie ueber die Pipeline ausgeliefert");
 
         // Die Tickets, die dieser Ablauf abnehmen kann, stehen als Kästchen da -
         // vorausgewählt, aber abwählbar. Wer sie abtippen muss, startet den Lauf
@@ -879,6 +895,7 @@ async function loadDeploy() {
             el("b", {}, pipeline.titel),
             ...(pipeline.brauchtCluster ? [el("span", { class: "tag warnrot" }, "verändert den Cluster")] : [el("span", { class: "tag" }, "ändert nichts")]),
             el("p", { class: "hint" }, pipeline.beschreibung),
+              standZeile,
             status,
             ...(boxes.length
               ? [el("div", { class: "ticketboxes" },

@@ -61,10 +61,13 @@ type Runner struct {
 	// released - a callback that reaches back into the runner would otherwise
 	// deadlock.
 	OnFinish func(Run)
-	// ProcessStarted is when this cockpit process began. Comparing it with the
-	// binary on disk answers the question the source timestamp cannot: is the
-	// service actually running what was built?
+	// ProcessStarted is when this cockpit process began.
 	ProcessStarted time.Time
+	// Journal remembers what each pipeline actually shipped, across restarts.
+	// Without it the change detection compared the built binary against this
+	// process, so restarting the cockpit to verify a change silently consumed
+	// the deploy (MC-0018).
+	Journal *Journal
 }
 
 func NewRunner(root, makeBinary, kubectlBinary string) *Runner {

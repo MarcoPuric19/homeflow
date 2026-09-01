@@ -80,11 +80,15 @@ on a clean machine" are not distinguished. That gap is accepted for the beta and
 is one of the reasons the checks are being made reproducible and hermetic
 (HF-0097 through HF-0103).
 
-**The mirror protects against disk failure and against a destroyed working tree.
-It does not protect against fire, theft or flood** if it lives in the same flat.
-That is a real limit of this decision, not an oversight. If off-site redundancy
-is wanted, the next step is option B — GitHub as an encrypted remote with
-`git-crypt` or `age`, checks still local — and not option A.
+**The mirror protects against a destroyed working tree and a corrupted
+repository. It does not protect against disk failure**, because Marco decided
+on 2026-09-01 against a removable second medium: only the near mirror at
+`~/.local/share/homeflow-mirror.git` exists, and it shares the NVMe with the
+working tree. If that disk fails, the history is gone — every commit, both
+copies. That is an accepted risk for a private project in beta, recorded rather
+than hidden, and revisited under HF-0115. If off-site redundancy is ever wanted,
+the next step is option B — GitHub as an encrypted remote with `git-crypt` or
+`age`, checks still local — and not option A.
 
 Mirroring only preserves what has been committed. At the time of this decision
 the working tree held over a hundred changed files against two commits, which is

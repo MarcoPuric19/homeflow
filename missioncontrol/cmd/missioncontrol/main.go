@@ -68,6 +68,10 @@ func run() error {
 	if *enableDeploy {
 		deployer = deploy.NewRunner(defaultRoot, *makePath, *kubectlPath)
 		deployer.ProcessStarted = time.Now()
+		// Laufzeitzustand, kein Quelltext: das Journal gehört nicht ins
+		// Repository. Es überlebt Neustarts und beantwortet, was zuletzt
+		// wirklich ausgeliefert wurde (MC-0018, HF-0104).
+		deployer.Journal = deploy.NewJournal(journalPath())
 	}
 	server := httpd.New(logger, store, cluster.KubectlRunner(*kubectlPath, *kubeconfig, *kubeContext),
 		repo.GitRunner(*gitPath, defaultRoot), deployer, httpd.Config{
@@ -156,4 +160,19 @@ func repositoryRoot() string {
 		dir = parent
 	}
 	return "."
+}
+
+// journalPath follows the XDG state convention and falls back to the home
+// directory. An empty path is also fine: the journal then keeps everything in
+// memory and simply forgets it on restart.
+func journalPath() string {
+	base := os.Getenv("XDG_STATE_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		base = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(base, "missioncontrol", "deployments.json")
 }

@@ -168,15 +168,31 @@ func (r *Runner) compareBinary(assessment *Assessment) {
 		assessment.Changes = append(assessment.Changes, Difference{Kind: "Quelltext", Detail: file})
 	}
 
-	// Zweite Frage, und die eigentlich wichtige: läuft der Dienst überhaupt auf
-	// dem, was gebaut wurde? Ein Bauen allein ändert nichts am laufenden
-	// Prozess - ohne diese Prüfung meldet das Cockpit "nichts zu tun", während
-	// es selbst auf einem alten Binary läuft.
-	assessment.Checked = append(assessment.Checked, "gebautes Binary gegen den laufenden Dienst")
-	if !r.ProcessStarted.IsZero() && info.ModTime().After(r.ProcessStarted) {
+	// Zweite Frage, und die eigentlich wichtige: ist das, was gebaut wurde, auch
+	// ausgeliefert? Der Vergleich läuft gegen den letzten erfolgreichen Deploy
+	// und ausdrücklich NICHT gegen den Start dieses Prozesses.
+	//
+	// Vorher tat er genau das, mit einer unangenehmen Folge: wer den Dienst neu
+	// startet, um eine Änderung überhaupt verifizieren zu können - und die
+	// Verifikationspflicht verlangt das -, hat damit den Deploy verbraucht. Das
+	// Cockpit meldete "nichts zu tun", der Knopf war tot und der automatische
+	// Übergang Test → Fertig fiel aus (MC-0018).
+	assessment.Checked = append(assessment.Checked, "gebautes Binary gegen den letzten Deploy")
+	if r.Journal == nil {
+		return
+	}
+	last, ok := r.Journal.Last("missioncontrol")
+	if !ok {
 		assessment.Changes = append(assessment.Changes, Difference{
-			Kind:   "Neustart",
-			Detail: "Der Dienst läuft auf einem älteren Binary - Neustart übernimmt es."})
+			Kind:   "Deploy",
+			Detail: "Noch nie über die Pipeline ausgeliefert."})
+		return
+	}
+	if info.ModTime().After(last.At) {
+		assessment.Changes = append(assessment.Changes, Difference{
+			Kind: "Deploy",
+			Detail: "Das gebaute Binary ist neuer als der zuletzt ausgelieferte Stand (" +
+				last.Version + " vom " + last.At.Format("02.01. 15:04") + ")."})
 	}
 }
 

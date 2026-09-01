@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -386,7 +387,11 @@ func TestTheBinaryItselfIsNotSource(t *testing.T) {
 	}
 }
 
-func TestServiceRunningAnOlderBinaryIsAChange(t *testing.T) {
+// Seit MC-0018 vergleicht die Erkennung das gebaute Binary gegen den letzten
+// erfolgreichen Deploy und nicht mehr gegen den Start dieses Prozesses. Der
+// alte Test prüfte die alte Semantik; das hier ist dieselbe Frage, richtig
+// gestellt: ist ausgeliefert, was gebaut wurde?
+func TestBuiltBinaryIsComparedAgainstTheLastDeploy(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "missioncontrol", "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -397,22 +402,100 @@ func TestServiceRunningAnOlderBinaryIsAChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := NewRunner(dir, "/bin/true", "/bin/true")
+	runner.Journal = NewJournal(filepath.Join(dir, "deployments.json"))
 
-	// Prozess später gestartet als das Binary: der Dienst läuft auf dem, was
-	// gebaut wurde - nichts zu tun.
-	runner.ProcessStarted = time.Now().Add(time.Minute)
-	if assessment := runner.Inspect(context.Background(), "missioncontrol"); assessment.HasChanges() {
-		t.Fatalf("läuft aktuell, trotzdem Änderung: %#v", assessment.Changes)
-	}
-
-	// Binary neuer als der Prozess: gebaut, aber nicht übernommen. Genau der
-	// Zustand, in dem das Cockpit vorher "nichts zu tun" meldete.
-	runner.ProcessStarted = time.Now().Add(-time.Hour)
+	// Noch nie ausgeliefert: es gibt etwas zu tun, egal wie alt das Binary ist.
 	assessment := runner.Inspect(context.Background(), "missioncontrol")
-	if !assessment.HasChanges() {
-		t.Fatal("altes Binary im Dienst wurde nicht erkannt")
+	if !assessment.HasChanges() || assessment.Changes[0].Kind != "Deploy" {
+		t.Fatalf("ohne Journal-Eintrag muss ein Deploy anstehen: %#v", assessment.Changes)
 	}
-	if assessment.Changes[0].Kind != "Neustart" {
-		t.Fatalf("changes=%#v", assessment.Changes)
+
+	// Deploy liegt nach dem Bauen: ausgeliefert, nichts zu tun. Ein Neustart
+	// des Dienstes ändert daran nichts - genau das war der Fehler.
+	if err := runner.Journal.Put(Record{Pipeline: "missioncontrol", Version: "1.0.0",
+		At: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	runner.ProcessStarted = time.Now().Add(time.Hour)
+	if assessment := runner.Inspect(context.Background(), "missioncontrol"); assessment.HasChanges() {
+		t.Fatalf("ausgeliefert, trotzdem Änderung: %#v", assessment.Changes)
+	}
+
+	// Neu gebaut nach dem letzten Deploy: das ist eine echte Änderung.
+	if err := os.Chtimes(binary, time.Now().Add(time.Hour), time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	assessment = runner.Inspect(context.Background(), "missioncontrol")
+	if !assessment.HasChanges() || assessment.Changes[0].Kind != "Deploy" {
+		t.Fatalf("neueres Binary wurde nicht erkannt: %#v", assessment.Changes)
+	}
+}
+
+// MC-0018: the change detection must not treat "I restarted the service to
+// verify something" as "the deploy already happened". That is what made the
+// button dead every time the cockpit checked its own work.
+func TestJournalSurvivesRestartAndAnswersLastAndPrevious(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "deployments.json")
+	journal := NewJournal(path)
+
+	if _, ok := journal.Last("missioncontrol"); ok {
+		t.Fatal("an empty journal must not claim a delivery")
+	}
+	if _, ok := journal.Previous("missioncontrol"); ok {
+		t.Fatal("without two entries there is no rollback target")
+	}
+
+	first := Record{Pipeline: "missioncontrol", Version: "0.14.0", RunID: 1,
+		At: time.Now().Add(-time.Hour), StartedBy: "Marco"}
+	second := Record{Pipeline: "missioncontrol", Version: "0.15.0", RunID: 2,
+		At: time.Now(), StartedBy: "Marco"}
+	for _, record := range []Record{first, second} {
+		if err := journal.Put(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The restart is the whole point: a fresh journal on the same file has to
+	// know the same things.
+	reopened := NewJournal(path)
+	last, ok := reopened.Last("missioncontrol")
+	if !ok || last.Version != "0.15.0" {
+		t.Fatalf("last after restart = %#v, want 0.15.0", last)
+	}
+	previous, ok := reopened.Previous("missioncontrol")
+	if !ok || previous.Version != "0.14.0" {
+		t.Fatalf("previous after restart = %#v, want 0.14.0 as the rollback target", previous)
+	}
+	if _, ok := reopened.Last("homeflow"); ok {
+		t.Fatal("pipelines must not share a history")
+	}
+}
+
+// A journal that keeps everything invites picking a random old version as a
+// rollback target. It keeps a handful, newest first.
+func TestJournalKeepsOnlyTheRecentEntries(t *testing.T) {
+	journal := NewJournal(filepath.Join(t.TempDir(), "deployments.json"))
+	for i := 0; i < keepPerPipeline+5; i++ {
+		if err := journal.Put(Record{Pipeline: "homeflow", Version: strconv.Itoa(i), At: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	history := journal.History("homeflow")
+	if len(history) != keepPerPipeline {
+		t.Fatalf("kept %d entries, want %d", len(history), keepPerPipeline)
+	}
+	if history[0].Version != strconv.Itoa(keepPerPipeline+4) {
+		t.Fatalf("newest entry is %q, want the last one written", history[0].Version)
+	}
+}
+
+// A corrupt file must not produce a confident wrong answer about what shipped.
+func TestJournalIgnoresABrokenFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deployments.json")
+	if err := os.WriteFile(path, []byte("{ this is not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := NewJournal(path).Last("homeflow"); ok {
+		t.Fatal("a broken journal must report nothing, not something")
 	}
 }

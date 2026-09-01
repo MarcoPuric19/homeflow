@@ -1,11 +1,13 @@
 package httpd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"missioncontrol/internal/deploy"
@@ -30,6 +32,7 @@ func (s *Server) deployState(w http.ResponseWriter, _ *http.Request) {
 		"verlauf":   s.deploy.History(),
 		"cluster":   deployTarget,
 		"abnahme":   s.awaitingAcceptance(),
+		"stand":     s.deploymentState(),
 	})
 }
 
@@ -226,7 +229,24 @@ func (s *Server) deployCancel(w http.ResponseWriter, _ *http.Request) {
 // wider would close tickets nobody looked at, and a board that closes itself
 // is worth less than one nobody updates.
 func (s *Server) afterDeploy(run deploy.Run) {
-	if run.Status != "erfolgreich" || len(run.Tickets) == 0 {
+	if run.Status != "erfolgreich" {
+		return
+	}
+	// Erst festhalten, was ausgeliefert wurde, dann Tickets bewegen. Der Eintrag
+	// ist auch dann richtig, wenn kein Ticket am Lauf hing - er beantwortet
+	// "was läuft gerade", nicht "was wurde abgenommen" (MC-0018, HF-0104).
+	if s.deploy != nil && s.deploy.Journal != nil {
+		record := deploy.Record{Pipeline: run.Pipeline, Version: run.Version,
+			At: run.Ended, RunID: run.ID, StartedBy: run.StartedBy, Tickets: run.Tickets}
+		if record.At.IsZero() {
+			record.At = time.Now()
+		}
+		record.Commit = s.headCommit()
+		if err := s.deploy.Journal.Put(record); err != nil {
+			s.logger.Error("Deploy-Journal schreiben", "error", err)
+		}
+	}
+	if len(run.Tickets) == 0 {
 		return
 	}
 	pipeline, ok := deploy.Find(run.Pipeline)
@@ -287,4 +307,42 @@ func itoa(value int) string {
 		value /= 10
 	}
 	return digits
+}
+
+// headCommit is best effort: a journal entry without a commit is still useful,
+// one that blocks the deploy because git hiccuped is not.
+func (s *Server) headCommit() string {
+	if s.git == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := s.git(ctx, "rev-parse", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// deploymentState answers two questions per pipeline that nothing could answer
+// before the journal existed: what is running, and what would a rollback go
+// back to. Both survive a restart of the cockpit (MC-0018, HF-0104).
+func (s *Server) deploymentState() []map[string]any {
+	out := make([]map[string]any, 0)
+	if s.deploy == nil || s.deploy.Journal == nil {
+		return out
+	}
+	for _, pipeline := range deploy.Pipelines() {
+		entry := map[string]any{"pipeline": pipeline.Name}
+		if last, ok := s.deploy.Journal.Last(pipeline.Name); ok {
+			entry["aktuell"] = last
+		}
+		// Ohne zweiten Eintrag gibt es kein Ziel. Das zu sagen ist ehrlicher als
+		// eine Schaltfläche anzubieten, die nirgendwohin führt.
+		if previous, ok := s.deploy.Journal.Previous(pipeline.Name); ok {
+			entry["rueckfall"] = previous
+		}
+		out = append(out, entry)
+	}
+	return out
 }

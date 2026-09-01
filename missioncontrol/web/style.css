@@ -254,3 +254,6 @@ svg.hist .selection{fill:var(--accent);opacity:.22;pointer-events:none}
 .mirror-warn .mirror-state{color:var(--warn)}
 .mirror-bad{border-color:#5a2020}
 .mirror-bad .mirror-state{color:var(--err)}
+.deploy-stand{font-size:.85em;margin:.2rem 0 .35rem}
+.deploy-stand .dim{color:var(--dim)}
+.deploy-stand code{font-size:.95em}
