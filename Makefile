@@ -1,7 +1,7 @@
 SHELL := /bin/sh
 
 APP := homeflow
-VERSION ?= 0.15.3
+VERSION ?= 0.15.11
 REGISTRY ?= localhost:5000
 IMAGE := $(REGISTRY)/homeflow/api:$(VERSION)
 GO_CACHE := $(CURDIR)/.cache/go-build
@@ -10,6 +10,7 @@ NAMESPACE := homeflow
 
 .DEFAULT_GOAL := help
 
+.PHONY: check-migrations check-resource-contract mirror
 .PHONY: help setup fmt fmt-check lint test ci mission-control mission-control-ci mission-control-install mission-control-status mission-control-logs mission-control-stop install-git-hooks frontend-test integration-test build frontend-build frontend-dev run dev down backup verify-backup docker-build docker-push kind-load manifests deploy status logs port-forward monitoring-manifests monitoring-deploy monitoring-status grafana-port-forward prometheus-port-forward grafana-password clean
 
 help: ## Show available commands
@@ -56,12 +57,14 @@ integration-test: ## Run DB tests; requires HOMEFLOW_TEST_DATABASE_URL ending in
 	@test -n "$$HOMEFLOW_TEST_DATABASE_URL" || { echo "HOMEFLOW_TEST_DATABASE_URL is required." >&2; exit 1; }
 	cd backend && GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go test -race -v ./internal/integration
 
-ci: ## Local CI: gofmt check, vet, TypeScript, all unit tests, both manifest renders, Mission Control
+ci: ## Local CI: gofmt, vet, TypeScript, unit tests, both manifest renders, migration and contract checks, Mission Control
 	@$(MAKE) --no-print-directory fmt-check
 	@$(MAKE) --no-print-directory lint
 	@$(MAKE) --no-print-directory test
 	@$(MAKE) --no-print-directory manifests
 	@$(MAKE) --no-print-directory monitoring-manifests
+	@$(MAKE) --no-print-directory check-migrations
+	@$(MAKE) --no-print-directory check-resource-contract
 	@$(MAKE) --no-print-directory mission-control-ci
 	@echo "ci: all checks passed (integration tests are separate: make integration-test)"
 
@@ -164,3 +167,14 @@ grafana-password: ## Intentionally display the local Grafana admin password
 clean: ## DESTRUCTIVE only for generated build/cache files; preserves DB and receipts
 	rm -f bin/homeflow
 	GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go clean -cache -testcache -modcache 2>/dev/null || true
+
+check-migrations: ## Check migration numbering against contracts.md 1.3 (no database needed)
+	@echo "check-migrations:"
+	@./scripts/check-migrations.sh
+
+check-resource-contract: ## Check contracts.md 2.1 against the rendered manifests and against allocatable
+	@echo "check-resource-contract:"
+	@./scripts/check-resource-contract.sh
+
+mirror: ## Push the history to every configured mirror remote (see ADR 0008)
+	@./scripts/mirror-repo.sh

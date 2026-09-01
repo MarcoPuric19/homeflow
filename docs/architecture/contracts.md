@@ -22,7 +22,7 @@ Diese Dinge haben mehr als einen Konsumenten. Wer eines davon ändert, ändert e
 
 ### 1.1 HTTP-API
 
-Vertrag: `docs/api/openapi.yaml` (aktuell `version: 0.15.3`).
+Vertrag: `docs/api/openapi.yaml` (aktuell `version: 0.15.11`).
 Konsumenten: `backend/internal/httpapi/server.go`, `frontend/src/api.ts`,
 die `curl`-Beispiele in `README.md`, Tests in `backend/internal/httpapi/*_test.go`.
 
@@ -73,6 +73,30 @@ Seit Version 0.15.3 lesen und ersetzen `GET/PUT
 /api/v1/expenses/{expenseId}/pet-links` höchstens je 100 Beziehungen zu
 Patientenakten und Tierterminen. PostgreSQL erzwingt denselben Haushalt und
 dasselbe Tier; Belege übernehmen Beziehungen ausschließlich über ihre Ausgabe.
+Seit Version 0.15.4 liefert `GET /api/v1/pets/{petId}/timeline` höchstens 100
+chronologische Einträge aus Patientenakte, Impfungen, Medikamenten, Gewicht,
+Labor, Dokumenten und Tierterminen mit Keyset-Paginierung (Standard 30).
+Seit Version 0.15.5 lesen und ersetzen `GET/PUT /api/v1/reminder-rules` die
+lokalen Vorlaufstufen des Haushalts (Standard 30, 7 und 1 Tage). Reminder tragen
+die konkrete Stufe und werden weiterhin ausschließlich beim Lesen berechnet.
+Seit Version 0.15.6 erzeugt `POST
+/api/v1/reminders/vaccinations/{sourceId}/appointment` auf ausdrückliche
+Benutzeraktion höchstens einen Tiertermin je Impfquelle; Eigentümer,
+Sichtbarkeit und Zeit werden explizit gesetzt.
+Seit Version 0.15.7 tragen Pet-Medikamente optional exakte Packungsgröße und
+Mindestbestand in derselben Bestandseinheit sowie manuelle Kauf- und
+Haltbarkeitsdaten. Es findet keine Verbrauchsberechnung statt.
+Seit Version 0.15.8 bieten Restock-Vorschau und -Bestätigung einen manuellen,
+race-sicher idempotenten Übergang von niedrigem Medikamentenbestand zu genau
+einem offenen, tierverknüpften Einkaufsartikel. Bestand wird separat manuell
+ersetzt; nach Abschluss darf erneut ein Artikel entstehen.
+Seit Version 0.15.9 tragen Einkaufsartikel optional eine bevorzugte Marke und
+einen Schätzpreis in Integer-Cents plus Währung sowie ein dokumentiertes
+Wiederholungskennzeichen. Wiederholung erzeugt niemals automatisch Artikel.
+Seit Version 0.15.10 tragen Pet-Monatsbudgets optional eine feste lokale
+Warnschwelle in Integer-Cents sowie Notizen. Monats- und Jahresauswertungen
+liefern das verbleibende Budget und den serverseitig berechneten Warnzustand;
+maßgeblich sind tatsächlich bezahlte Ausgaben, nicht offene Planwerte.
 
 ### 1.2 Metriknamen
 
@@ -126,6 +150,12 @@ Vergeben: `000011_pet_measurements_reminders` (Codex, Pet E9)
 Vergeben: `000012_pet_profile_details` (Codex, HF-0061)
 Vergeben: `000013_pet_vaccination_details` (Codex, HF-0062)
 Vergeben: `000014_medical_financial_links` (Codex, HF-0063)
+Vergeben: `000015_pet_reminder_rules` (Codex, HF-0065)
+Vergeben: `000016_reminder_appointments` (Codex, HF-0066)
+Vergeben: `000017_pet_medication_inventory` (Codex, HF-0067)
+Vergeben: `000018_medication_shopping_origin` (Codex, HF-0068)
+Vergeben: `000019_pet_shopping_metadata` (Codex, HF-0070)
+Vergeben: `000020_pet_budget_warning_threshold` (Codex, HF-0069)
 
 Weitere Reservierungen: *(noch nichts)*
 
@@ -154,7 +184,7 @@ auf einer Seite geändert wird, äußert sich als stiller 403.
 
 ### 1.6 Image-Version
 
-`VERSION` im `Makefile` (aktuell `0.15.3`), das `image:`-Tag in
+`VERSION` im `Makefile` (aktuell `0.15.9`), das `image:`-Tag in
 `kubernetes/base/api-deployment.yaml` und `info.version` in `openapi.yaml`
 müssen zusammenpassen. `make deploy` lädt das Image direkt in den kind-Node;
 ein Versions-Mismatch zeigt sich als „läuft, aber alter Code".
@@ -188,16 +218,61 @@ mit und prüft die Summe.
 
 ### 2.1 RAM-/CPU-Budget
 
-| Komponente | Request | Limit | Quelle |
-| --- | --- | --- | --- |
-| API (inkl. statischem Web-UI) | 32 MiB / 10 mCPU | 192 MiB / 200 mCPU | `kubernetes/base/api-deployment.yaml` |
-| PostgreSQL | — | 384 MiB (Compose) | `compose.yaml`, `kubernetes/base/postgres.yaml` |
-| Monitoring-Stack gesamt | 224 MiB / 80 mCPU | 768 MiB / 600 mCPU | `monitoring/README.md` |
+| Komponente | Request | Limit | Gemessene Spitze | Quelle |
+| --- | --- | --- | --- | --- |
+| API (inkl. statischem Web-UI) | 160 MiB / 10 mCPU | 192 MiB / 200 mCPU | 142 MiB | `kubernetes/base/api-deployment.yaml` |
+| PostgreSQL | 128 MiB / 25 mCPU | 384 MiB / 500 mCPU | 47 MiB | `kubernetes/base/postgres.yaml`, `compose.yaml` |
+| Prometheus | 160 MiB / 50 mCPU | 384 MiB / 300 mCPU | 133 MiB | `monitoring/kubernetes/prometheus.yaml` |
+| Grafana | 160 MiB / 20 mCPU | 256 MiB / 200 mCPU | 165 MiB | `monitoring/kubernetes/grafana.yaml` |
+| kube-state-metrics | 64 MiB / 10 mCPU | 128 MiB / 100 mCPU | 63 MiB | `monitoring/kubernetes/kube-state-metrics.yaml` |
+| **Monitoring gesamt** | **384 MiB / 80 mCPU** | **768 MiB / 600 mCPU** | 361 MiB | `monitoring/README.md` |
 
-Das API-Limit von 192 MiB ist knapp und nicht beliebig: Argon2id belegt pro
-Passwortprüfung rund **64 MiB**, maximal zwei Prüfungen laufen gleichzeitig.
-Wer die Argon2-Parameter, die Parallelität oder das Memory-Limit anfasst, fasst
-drei zusammenhängende Zahlen an.
+Die Spalte „gemessene Spitze" stammt aus dem cAdvisor-Scrape und ist mit
+`scripts/resource-report.sh` reproduzierbar; Herleitung und Optionen stehen in
+`docs/operations/resource-budget.md`.
+
+**Requests sind auf diesem Cluster kein Scheduling-Detail.** Der kind-Knoten
+meldet `allocatable` = `capacity` und hat keine `evictionHard.memory.available`,
+die Speicher-Eviction des kubelets ist also aus. Bei Speichermangel entscheidet
+der Host-Kernel nach `oom_score_adj`, und der ergibt sich bei Burstable aus
+`1000 − 1000 × request / capacity`. Ein Request unter dem echten Verbrauch
+schiebt den Pod nach vorn in die Kill-Reihe. Deshalb liegen die Requests oben
+über der gemessenen Spitze statt beim Minimum. `kubernetes/kind-cluster.yaml`
+enthält die Reservierungen, die das entschärfen — sie wirken erst beim nächsten
+Aufbau des Clusters.
+
+Das API-Limit von 192 MiB ist knapp und nicht beliebig. Zwei Zahlen bilden es,
+und sie werden leicht verwechselt:
+
+| Zahl | Wert | Was sie bedeutet |
+| --- | --- | --- |
+| `argonMemory` | 64 MiB | Speicher **je einzelner** Argon2id-Prüfung |
+| `passwordConcurrency` | 1 | wie viele Prüfungen **gleichzeitig** laufen dürfen |
+
+Beide stehen in `backend/internal/auth/`. Ihr **Produkt** ist der Speicher, den
+die Anwendung im schlimmsten Fall allein für Passwortarbeit belegt — heute
+64 MiB von 192 MiB. Wer eine der beiden oder das Limit anfasst, fasst drei
+zusammenhängende Zahlen an; `TestPasswordWorkFitsInTheContainerLimit` bewacht
+das Produkt und fällt, sobald es nicht mehr passt.
+
+**Nicht zu verwechseln mit `argonParallelism`** (Wert 2). Das ist der Parameter
+`p` des Verfahrens, also die Zahl der Rechenbahnen **innerhalb einer** Prüfung.
+Er steht im gespeicherten Hash, verändert den Speicherbedarf nicht und darf
+nicht angefasst werden, um Speicher zu sparen — das würde jeden vorhandenen Hash
+ungültig machen.
+
+`passwordConcurrency` war 2. Zwei gleichzeitige Anmeldungen haben den Pod auf
+191,8 MiB von 192 MiB getrieben und der Kernel hat ihn getötet
+(`constraint=CONSTRAINT_MEMCG`, HF-0087). Die Schranke umschließt seit HF-0091
+nur noch die Argon2-Arbeit selbst und nicht mehr die ganze Anmeldung, sonst
+serialisierte sie auch die Datenbankabfragen.
+
+**PostgreSQL-Parameter sind gesetzt, nicht geerbt** (`args` in
+`kubernetes/base/postgres.yaml`): `max_connections=20`, `shared_buffers=96MB`,
+`effective_cache_size=192MB`, `maintenance_work_mem=32MB`. Ohne sie galten die
+Image-Vorgaben — 100 Verbindungen gegen einen Pool von 5 und 4 GiB
+`effective_cache_size` auf einem 7-GiB-Laptop. Diese vier Zahlen gehören zum
+384-MiB-Limit und werden mit ihm zusammen geändert (HF-0090).
 
 **Konsequenz für neue Komponenten:** jede zusätzliche Dauerkomponente kostet
 RAM, das nicht da ist. Ein Alertmanager (~64 MiB) oder ein Log-Stack (Loki +
@@ -210,6 +285,10 @@ nicht ressourcenfrei.
 | Grenze | Wert | Quelle |
 | --- | --- | --- |
 | DB-Verbindungspool | max. 5 | `backend/internal/postgres/database.go` |
+| PostgreSQL `max_connections` | 20 | `kubernetes/base/postgres.yaml` |
+| Gleichzeitige Passwortprüfungen | 1, je ~64 MiB | `passwordConcurrency` in `backend/internal/auth/postgres.go` |
+| Argon2id-Parameter | m=64 MiB, t=3, p=2 | `backend/internal/auth/password.go` — steht im Hash, Änderung entwertet alle Passwörter |
+| Alarmschwelle Container-Speicher | 85 % des Limits, 10 min | `HomeflowContainerMemoryNearLimit` in `monitoring/kubernetes/prometheus.yaml` |
 | Beleg-Upload | 10 MiB + 1 MiB Multipart-Overhead | `receipts.MaxUploadBytes`, `server.go` |
 | JSON-Request-Body | 64 KiB | `decodeJSON` in `server.go` |
 | HTTP-Header | 16 KiB | `main.go` |
@@ -226,12 +305,14 @@ nicht ressourcenfrei.
 | Pet-Textfelder | Name 120, Tierart 80, Rasse 120, Farbe 100, Versicherung/Tierarzt 200, Versicherungsnummer 100, Notizen 2000 Zeichen | `pets.Service`, Migrationen `000003`, `000012` |
 | Patientenakte | standardmäßig 30, maximal 100 Einträge je Seite; Details max. 20 Schlüssel | `pets.Service`, Migration `000004` |
 | Impfverlauf | standardmäßig 30, maximal 100 Einträge je Seite; keine automatische Intervallberechnung | `pets.Service`, Migration `000005` |
-| Medikamente je Tier | maximal 100 je Abfrage; Bestand als exakte Dezimalzeichenfolge mit max. 3 Nachkommastellen | `pets.Service`, Migration `000007` |
+| Medikamente je Tier | maximal 100 je Abfrage; Bestand, Packungsgröße und Mindestbestand als exakte Dezimalzeichenfolgen mit max. 3 Nachkommastellen in derselben Einheit | `pets.Service`, Migrationen `000007`, `000017` |
 | Ausgabenliste | maximal 100 je Anfrage; optionaler Monats- und Tierfilter | `expenses.Service`, Migration `000009` |
-| Tierbudgets/-auswertung | maximal 100 Kategorien; Budget pro Tier/Monat/Kategorie eindeutig; Auswertung genau ein Monat oder Jahr | `expenses.Service`, Migration `000009` |
+| Tierbudgets/-auswertung | maximal 100 Kategorien; Budget pro Tier/Monat/Kategorie eindeutig; optionale feste Warnschwelle in Integer-Cents, Notiz maximal 2000 Zeichen; Auswertung genau ein Monat oder Jahr | `expenses.Service`, Migrationen `000009`, `000020` |
 | Medizinische Dokumente | 10 MiB je Datei; maximal 100 Metadatensätze je Tierabfrage; gemeinsames 1-GiB-Datei-PVC mit Belegen | `documents.Service`, `receipts.LocalStorage`, Migration `000010` |
 | Gewicht/Labor | maximal 100 je Tierabfrage; Gewicht max. 3, Laborwerte max. 4 Nachkommastellen als exakte Dezimalstrings | `pets.Service`, Migration `000011` |
 | Abgeleitete Erinnerungen | maximal 366 Tage und 100 Treffer je Anfrage; keine Hintergrundzustellung | `reminders.Service` |
+| Reminder-Regeln | 1 bis 10 eindeutige Vorlaufwerte, jeweils 0 bis 366 Tage; Standard 30/7/1 | `reminders.Service`, Migration `000015` |
+| Pet-Gesamtzeitleiste | standardmäßig 30, maximal 100 Einträge je Seite; Keyset über Datum, Typ und Quell-ID | `pets.Service` |
 
 Die Zwei-Benutzer-Grenze ist in der Datenbank durchgesetzt, nicht nur in der
 Anwendung. Sie ist eine Produktentscheidung — nicht „aufbohren", weil ein Test
@@ -240,9 +321,12 @@ beschreibt das Ziel von rund 10.000 Benutzern; dort fällt diese Grenze als
 Erstes. Sie fällt aber nur zusammen mit Mandantenfähigkeit (F2.2) und einem
 ADR — bis dahin gilt der Satz oben unverändert.
 
-Ebenso laptop-gebunden sind die Zahlen darüber: DB-Pool 5, Argon2 mit 64 MiB
-bei zwei Slots und das API-Limit von 192 MiB sind für zwei Menschen richtig
-dimensioniert und in F2.1 als Erstes genannt, was bei 500 gleichzeitigen
-Benutzern bricht.
+Ebenso laptop-gebunden sind die Zahlen darüber: DB-Pool 5, `max_connections=20`,
+Argon2 mit 64 MiB bei **einem** Slot und das API-Limit von 192 MiB sind für zwei
+Menschen richtig dimensioniert und in F2.1 als Erstes genannt, was bei 500
+gleichzeitigen Benutzern bricht. Ein einzelner Slot heißt dort: Anmeldungen
+stehen Schlange. Für zwei Menschen kostet das die Dauer eines Hashes, für 500
+wäre es der Engpass — die Antwort darauf ist mehr als eine größere Zahl, weil
+64 MiB je Prüfung mit der Gleichzeitigkeit mitwachsen.
 
 ---
