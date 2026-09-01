@@ -33,7 +33,7 @@ func (r *MemoryRepository) ListVisible(_ context.Context, userID string, window 
 	defer r.mu.RUnlock()
 	events := make([]Event, 0)
 	for _, event := range r.events {
-		if visible(event, userID) && event.StartsAt.Before(window.To) && !event.EndsAt.Before(window.From) && (window.PetID == "" || (event.PetID != nil && *event.PetID == window.PetID)) {
+		if visible(event, userID) && event.StartsAt.Before(window.To) && !event.EndsAt.Before(window.From) && (window.PetID == "" || event.PetID == window.PetID) {
 			events = append(events, event)
 		}
 	}

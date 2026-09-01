@@ -25,7 +25,7 @@ func (reminderRepo) ReplaceRules(_ context.Context, _ string, values []int) (rem
 }
 func (reminderRepo) CreateAppointment(_ context.Context, _ string, _ string, event calendar.Event) (calendar.Event, error) {
 	petID := "00000000-0000-4000-8000-000000000099"
-	event.PetID = &petID
+	event.PetID = petID
 	return event, nil
 }
 

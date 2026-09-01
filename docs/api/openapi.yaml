@@ -1270,7 +1270,8 @@ components:
         nextCursor: { type: string, format: uuid }
     CalendarEvent:
       type: object
-      required: [id, title, startsAt, endsAt, allDay, ownerId, visibility, status, createdAt, updatedAt]
+      # petId ist seit HF-0116 Pflicht: es gibt keinen Termin ohne Tier.
+      required: [id, title, startsAt, endsAt, allDay, ownerId, visibility, status, petId, createdAt, updatedAt]
       properties:
         id: { type: string, format: uuid }
         title: { type: string, minLength: 1, maxLength: 300 }
@@ -1290,7 +1291,7 @@ components:
         updatedAt: { type: string, format: date-time }
     CalendarEventInput:
       type: object
-      required: [title, startsAt, endsAt]
+      required: [title, startsAt, endsAt, petId]
       properties:
         title: { type: string, minLength: 1, maxLength: 300 }
         description: { type: string, maxLength: 2000 }
@@ -1342,6 +1343,13 @@ components:
         estimatedPriceCents: { type: integer, format: int64, minimum: 0 }
         estimatedPriceCurrency: { type: string, minLength: 3, maxLength: 3, default: EUR }
         recurring: { type: boolean, default: false, description: Documentation only; no item is created automatically }
+        forAllPets:
+          type: boolean
+          default: false
+          description: >-
+            Seit HF-0116 muss ein Artikel Tierbezug haben. Entweder petIds
+            oder ausdruecklich forAllPets - beides leer ergibt 422. "Fuer alle
+            Tiere" ist eine Markierung und nicht die leere Menge.
         petIds:
           type: array
           maxItems: 20
@@ -1363,7 +1371,8 @@ components:
     CreateExpense:
       type: object
       additionalProperties: false
-      required: [description, plannedAmountCents, dueDate]
+      # petId ist seit HF-0116 Pflicht: es gibt keine Ausgabe ohne Tier.
+      required: [description, plannedAmountCents, dueDate, petId]
       properties:
         description: { type: string, minLength: 1, maxLength: 300 }
         merchant: { type: string }

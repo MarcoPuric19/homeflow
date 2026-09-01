@@ -44,7 +44,7 @@ func TestShoppingRequiresAuthentication(t *testing.T) {
 
 func TestCreateRejectsTrailingJSON(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/shopping/items",
-		bytes.NewBufferString(`{"name":"Milk","quantity":"1"} true`))
+		bytes.NewBufferString(`{"forAllPets":true,"name":"Milk","quantity":"1"} true`))
 	request.Header.Set("Authorization", "Bearer "+testToken)
 	recorder := httptest.NewRecorder()
 	newTestServer(t).ServeHTTP(recorder, request)
@@ -55,7 +55,7 @@ func TestCreateRejectsTrailingJSON(t *testing.T) {
 
 func TestShoppingAPIFlow(t *testing.T) {
 	handler := newTestServer(t)
-	body := bytes.NewBufferString(`{"name":"Cat litter","quantity":"2","unit":"packs","category":"pet supplies"}`)
+	body := bytes.NewBufferString(`{"forAllPets":true,"name":"Cat litter","quantity":"2","unit":"packs","category":"pet supplies"}`)
 	create := httptest.NewRequest(http.MethodPost, "/api/v1/shopping/items", body)
 	create.Header.Set("Authorization", "Bearer "+testToken)
 	create.Header.Set("Content-Type", "application/json")

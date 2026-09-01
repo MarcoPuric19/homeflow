@@ -46,9 +46,7 @@ func (r *PostgresRepository) Create(ctx context.Context, userID string, expense 
 		if err != nil {
 			return Expense{}, err
 		}
-		if created.PetID != nil {
-			err = outbox.WriteForPet(ctx, tx, "pet_expense.created", "expense", created.ID, *created.PetID, nil)
-		}
+		err = outbox.WriteForPet(ctx, tx, "pet_expense.created", "expense", created.ID, created.PetID, nil)
 		return created, err
 	})
 }
@@ -79,15 +77,15 @@ func (r *PostgresRepository) MarkPaid(ctx context.Context, expenseID, userID str
 	  WHERE e.id=$1 AND e.status IN ('planned','open') AND e.household_id IN
 	  (SELECT household_id FROM household_members WHERE user_id=$4) RETURNING `+expenseColumns, expenseID, amount, paidAt, userID))
 		if err == nil {
-			if expense.PetID != nil && expense.BudgetCategory != "" {
+			if expense.BudgetCategory != "" {
 				var budgetID string
 				var reachedBefore, reachedNow bool
-				err = tx.QueryRow(ctx, `SELECT b.id::text,b.amount_cents-(COALESCE(sum(e.actual_amount_cents) FILTER (WHERE e.status='paid'),0)-$4) <= b.warning_threshold_cents,b.amount_cents-COALESCE(sum(e.actual_amount_cents) FILTER (WHERE e.status='paid'),0) <= b.warning_threshold_cents FROM pet_budgets b LEFT JOIN expenses e ON e.household_id=b.household_id AND e.pet_id=b.pet_id AND COALESCE(NULLIF(e.budget_category,''),NULLIF(e.category,''),'Unkategorisiert')=b.category AND date_trunc('month',e.due_date)=b.month WHERE b.pet_id=$1 AND b.month=date_trunc('month',$2::date) AND b.category=$3 AND b.warning_threshold_cents IS NOT NULL GROUP BY b.id,b.amount_cents,b.warning_threshold_cents`, *expense.PetID, expense.DueDate, expense.BudgetCategory, amount).Scan(&budgetID, &reachedBefore, &reachedNow)
+				err = tx.QueryRow(ctx, `SELECT b.id::text,b.amount_cents-(COALESCE(sum(e.actual_amount_cents) FILTER (WHERE e.status='paid'),0)-$4) <= b.warning_threshold_cents,b.amount_cents-COALESCE(sum(e.actual_amount_cents) FILTER (WHERE e.status='paid'),0) <= b.warning_threshold_cents FROM pet_budgets b LEFT JOIN expenses e ON e.household_id=b.household_id AND e.pet_id=b.pet_id AND COALESCE(NULLIF(e.budget_category,''),NULLIF(e.category,''),'Unkategorisiert')=b.category AND date_trunc('month',e.due_date)=b.month WHERE b.pet_id=$1 AND b.month=date_trunc('month',$2::date) AND b.category=$3 AND b.warning_threshold_cents IS NOT NULL GROUP BY b.id,b.amount_cents,b.warning_threshold_cents`, expense.PetID, expense.DueDate, expense.BudgetCategory, amount).Scan(&budgetID, &reachedBefore, &reachedNow)
 				if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 					return Expense{}, err
 				}
 				if err == nil && !reachedBefore && reachedNow {
-					err = outbox.WriteForPet(ctx, tx, "pet_budget.threshold.reached", "pet_budget", budgetID, *expense.PetID, nil)
+					err = outbox.WriteForPet(ctx, tx, "pet_budget.threshold.reached", "pet_budget", budgetID, expense.PetID, nil)
 				}
 			}
 			return expense, err

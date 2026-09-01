@@ -38,7 +38,7 @@ func NewService(repository Repository) *Service {
 func (s *Service) Create(ctx context.Context, input CreateExpense, userID string) (Expense, error) {
 	input.Description = strings.TrimSpace(input.Description)
 	input.BudgetCategory = strings.TrimSpace(input.BudgetCategory)
-	if input.Description == "" || len(input.Description) > 300 || input.PlannedAmountCents < 0 || len(input.BudgetCategory) > 100 || (input.PetID != nil && !id.IsUUID(*input.PetID)) {
+	if input.Description == "" || len(input.Description) > 300 || input.PlannedAmountCents < 0 || len(input.BudgetCategory) > 100 || !id.IsUUID(strings.TrimSpace(input.PetID)) {
 		return Expense{}, ErrInvalid
 	}
 	if input.Currency == "" {

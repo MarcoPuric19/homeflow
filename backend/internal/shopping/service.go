@@ -69,6 +69,18 @@ func (s *Service) Create(ctx context.Context, input CreateItem, userID string) (
 	if input.Name == "" || len(input.Name) > 200 || input.Quantity == "" || len(input.Quantity) > 40 || len(input.PreferredBrand) > 200 || input.EstimatedPriceCents != nil && *input.EstimatedPriceCents < 0 || len(input.EstimatedPriceCurrency) != 3 {
 		return Item{}, ErrInvalid
 	}
+	// HF-0116: ein Artikel gehört zu Tieren oder ausdrücklich zu allen. Das
+	// Schema kann das nicht prüfen - die Bedingung hängt an shopping_item_pets,
+	// und eine Zeilenprüfung liest keine andere Tabelle. Hier ist die einzige
+	// Stelle, an der es durchgesetzt wird.
+	if !input.ForAllPets && len(input.PetIDs) == 0 {
+		return Item{}, ErrInvalid
+	}
+	for _, pet := range input.PetIDs {
+		if !id.IsUUID(pet) {
+			return Item{}, ErrInvalid
+		}
+	}
 	if input.ListID == "" {
 		input.ListID = "shared"
 	}

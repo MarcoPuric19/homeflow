@@ -37,12 +37,16 @@ func (r *fakeRepository) PetSummary(_ context.Context, _, petID, period string) 
 	return PetSummary{PetID: petID, Period: period}, nil
 }
 
+// testPet steht in jeder gültigen Eingabe, weil es seit HF-0116 keine Ausgabe
+// ohne Tier mehr gibt.
+const testPet = "9f1d2c3b-4a5e-4f60-8123-abcdefabcdef"
+
 func TestCreateAndPayExpense(t *testing.T) {
 	repository := &fakeRepository{}
 	service := NewService(repository)
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	service.now = func() time.Time { return now }
-	expense, err := service.Create(context.Background(), CreateExpense{Description: "Rent", PlannedAmountCents: 120000, DueDate: "2026-09-01"}, "user-1")
+	expense, err := service.Create(context.Background(), CreateExpense{Description: "Rent", PlannedAmountCents: 120000, DueDate: "2026-09-01", PetID: testPet}, "user-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,9 +85,13 @@ func TestBudgetAndSummaryValidation(t *testing.T) {
 func TestRejectInvalidExpense(t *testing.T) {
 	service := NewService(&fakeRepository{})
 	for _, input := range []CreateExpense{
-		{Description: "", PlannedAmountCents: 1, DueDate: "2026-09-01"},
-		{Description: "Bad", PlannedAmountCents: -1, DueDate: "2026-09-01"},
-		{Description: "Bad", PlannedAmountCents: 1, DueDate: "09/01/2026"},
+		{Description: "", PlannedAmountCents: 1, DueDate: "2026-09-01", PetID: testPet},
+		{Description: "Bad", PlannedAmountCents: -1, DueDate: "2026-09-01", PetID: testPet},
+		{Description: "Bad", PlannedAmountCents: 1, DueDate: "09/01/2026", PetID: testPet},
+		// HF-0116: ohne Tier ist die Ausgabe ungültig, und zwar unabhängig
+		// davon, dass sonst alles stimmt.
+		{Description: "Ohne Tier", PlannedAmountCents: 1, DueDate: "2026-09-01"},
+		{Description: "Kein UUID", PlannedAmountCents: 1, DueDate: "2026-09-01", PetID: "nicht-uuid"},
 	} {
 		if _, err := service.Create(context.Background(), input, "user"); err != ErrInvalid {
 			t.Fatalf("input=%#v err=%v", input, err)

@@ -74,7 +74,7 @@ func createEvent(t *testing.T, handler http.Handler, token, body string) calenda
 func TestCalendarCreateListAndDelete(t *testing.T) {
 	alice, _ := calendarHandlers(t)
 	event := createEvent(t, alice, aliceToken,
-		`{"title":"Zahnarzt","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z","category":"Gesundheit"}`)
+		`{"petId":"9f1d2c3b-4a5e-4f60-8123-abcdefabcdef","title":"Zahnarzt","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z","category":"Gesundheit"}`)
 	if event.OwnerID != aliceID || event.Visibility != calendar.VisibilityShared || event.Status != calendar.StatusPlanned {
 		t.Fatalf("event=%#v", event)
 	}
@@ -106,11 +106,11 @@ func TestCalendarCreateListAndDelete(t *testing.T) {
 func TestCalendarUpdateKeepsTheOwner(t *testing.T) {
 	alice, bob := calendarHandlers(t)
 	event := createEvent(t, alice, aliceToken,
-		`{"title":"Müllabfuhr","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z"}`)
+		`{"petId":"9f1d2c3b-4a5e-4f60-8123-abcdefabcdef","title":"Müllabfuhr","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z"}`)
 
 	// A shared event belongs to the household, so the other member may edit it.
 	updated := callCalendar(t, bob, bobToken, http.MethodPut, "/api/v1/calendar/events/"+event.ID,
-		`{"title":"Müllabfuhr verschoben","startsAt":"2026-09-11T09:00:00Z","endsAt":"2026-09-11T10:00:00Z","status":"completed"}`)
+		`{"petId":"9f1d2c3b-4a5e-4f60-8123-abcdefabcdef","title":"Müllabfuhr verschoben","startsAt":"2026-09-11T09:00:00Z","endsAt":"2026-09-11T10:00:00Z","status":"completed"}`)
 	if updated.Code != http.StatusOK {
 		t.Fatalf("update status=%d body=%s", updated.Code, updated.Body.String())
 	}
@@ -129,7 +129,7 @@ func TestCalendarUpdateKeepsTheOwner(t *testing.T) {
 func TestCalendarPrivateEventIsInvisibleToTheOtherMember(t *testing.T) {
 	alice, bob := calendarHandlers(t)
 	private := createEvent(t, alice, aliceToken,
-		`{"title":"Überraschung","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z","visibility":"private"}`)
+		`{"petId":"9f1d2c3b-4a5e-4f60-8123-abcdefabcdef","title":"Überraschung","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z","visibility":"private"}`)
 
 	list := callCalendar(t, bob, bobToken, http.MethodGet, "/api/v1/calendar/events"+septemberQuery, "")
 	if list.Code != http.StatusOK {
@@ -144,7 +144,7 @@ func TestCalendarPrivateEventIsInvisibleToTheOtherMember(t *testing.T) {
 		body   string
 	}{
 		{http.MethodGet, ""},
-		{http.MethodPut, `{"title":"Geklaut","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z"}`},
+		{http.MethodPut, `{"petId":"9f1d2c3b-4a5e-4f60-8123-abcdefabcdef","title":"Geklaut","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z"}`},
 		{http.MethodDelete, ""},
 	} {
 		response := callCalendar(t, bob, bobToken, request.method, "/api/v1/calendar/events/"+private.ID, request.body)
@@ -166,7 +166,7 @@ func TestCalendarPrivateEventIsInvisibleToTheOtherMember(t *testing.T) {
 func TestCalendarRejectsBadRequests(t *testing.T) {
 	alice, _ := calendarHandlers(t)
 	event := createEvent(t, alice, aliceToken,
-		`{"title":"Zahnarzt","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z"}`)
+		`{"petId":"9f1d2c3b-4a5e-4f60-8123-abcdefabcdef","title":"Zahnarzt","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z"}`)
 
 	cases := map[string]struct {
 		method string
@@ -178,15 +178,15 @@ func TestCalendarRejectsBadRequests(t *testing.T) {
 		"unparsable range": {http.MethodGet, "/api/v1/calendar/events?from=gestern&to=morgen", "", http.StatusBadRequest},
 		"inverted range":   {http.MethodGet, "/api/v1/calendar/events?from=2026-10-01&to=2026-09-01", "", http.StatusBadRequest},
 		"range too wide":   {http.MethodGet, "/api/v1/calendar/events?from=2020-01-01&to=2026-01-01", "", http.StatusBadRequest},
-		"empty title":      {http.MethodPost, "/api/v1/calendar/events", `{"title":"  ","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z"}`, http.StatusUnprocessableEntity},
-		"end before start": {http.MethodPost, "/api/v1/calendar/events", `{"title":"X","startsAt":"2026-09-10T10:00:00Z","endsAt":"2026-09-10T09:00:00Z"}`, http.StatusUnprocessableEntity},
-		"unknown field":    {http.MethodPost, "/api/v1/calendar/events", `{"title":"X","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z","ownerId":"me"}`, http.StatusBadRequest},
+		"empty title":      {http.MethodPost, "/api/v1/calendar/events", `{"petId":"9f1d2c3b-4a5e-4f60-8123-abcdefabcdef","title":"  ","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z"}`, http.StatusUnprocessableEntity},
+		"end before start": {http.MethodPost, "/api/v1/calendar/events", `{"petId":"9f1d2c3b-4a5e-4f60-8123-abcdefabcdef","title":"X","startsAt":"2026-09-10T10:00:00Z","endsAt":"2026-09-10T09:00:00Z"}`, http.StatusUnprocessableEntity},
+		"unknown field":    {http.MethodPost, "/api/v1/calendar/events", `{"petId":"9f1d2c3b-4a5e-4f60-8123-abcdefabcdef","title":"X","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z","ownerId":"me"}`, http.StatusBadRequest},
 		"broken json":      {http.MethodPost, "/api/v1/calendar/events", `{`, http.StatusBadRequest},
 		"malformed get id": {http.MethodGet, "/api/v1/calendar/events/nonsense", "", http.StatusBadRequest},
-		"malformed put id": {http.MethodPut, "/api/v1/calendar/events/nonsense", `{"title":"X","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z"}`, http.StatusBadRequest},
+		"malformed put id": {http.MethodPut, "/api/v1/calendar/events/nonsense", `{"petId":"9f1d2c3b-4a5e-4f60-8123-abcdefabcdef","title":"X","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z"}`, http.StatusBadRequest},
 		"malformed del id": {http.MethodDelete, "/api/v1/calendar/events/nonsense", "", http.StatusBadRequest},
 		"unknown event":    {http.MethodGet, "/api/v1/calendar/events/00000000-0000-4000-8000-0000000000ff", "", http.StatusNotFound},
-		"invalid update":   {http.MethodPut, "/api/v1/calendar/events/" + event.ID, `{"title":"","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z"}`, http.StatusUnprocessableEntity},
+		"invalid update":   {http.MethodPut, "/api/v1/calendar/events/" + event.ID, `{"petId":"9f1d2c3b-4a5e-4f60-8123-abcdefabcdef","title":"","startsAt":"2026-09-10T09:00:00Z","endsAt":"2026-09-10T10:00:00Z"}`, http.StatusUnprocessableEntity},
 	}
 	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {

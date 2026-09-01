@@ -50,9 +50,7 @@ func (r *PostgresRepository) Create(ctx context.Context, event Event) (Event, er
 		if err != nil {
 			return Event{}, err
 		}
-		if created.PetID != nil {
-			err = outbox.WriteForPet(ctx, tx, "appointment.created", "calendar_event", created.ID, *created.PetID, nil)
-		}
+		err = outbox.WriteForPet(ctx, tx, "appointment.created", "calendar_event", created.ID, created.PetID, nil)
 		return created, err
 	})
 }
@@ -118,8 +116,8 @@ func (r *PostgresRepository) Update(ctx context.Context, userID string, event Ev
 		if err != nil {
 			return Event{}, err
 		}
-		if previous != StatusCompleted && updated.Status == StatusCompleted && updated.PetID != nil {
-			err = outbox.WriteForPet(ctx, tx, "appointment.completed", "calendar_event", updated.ID, *updated.PetID, nil)
+		if previous != StatusCompleted && updated.Status == StatusCompleted {
+			err = outbox.WriteForPet(ctx, tx, "appointment.completed", "calendar_event", updated.ID, updated.PetID, nil)
 		}
 		return updated, err
 	})

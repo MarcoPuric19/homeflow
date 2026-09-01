@@ -19,11 +19,17 @@ func newService(t *testing.T) *Service {
 	return service
 }
 
+// testPet steht in jedem Termin, weil es seit HF-0116 keinen Termin ohne Tier
+// mehr gibt. Die Tests, die das vorher ausgelassen haben, prüften einen
+// Zustand, den es nicht mehr gibt.
+const testPet = "9f1d2c3b-4a5e-4f60-8123-abcdefabcdef"
+
 func input(overrides func(*EventInput)) EventInput {
 	value := EventInput{
 		Title:    "Zahnarzt",
 		StartsAt: time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC),
 		EndsAt:   time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC),
+		PetID:    testPet,
 	}
 	if overrides != nil {
 		overrides(&value)

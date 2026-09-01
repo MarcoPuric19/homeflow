@@ -46,7 +46,7 @@ func (r *MemoryRepository) List(_ context.Context, _ string, listID string, incl
 }
 
 func (r *MemoryRepository) Lists(_ context.Context, _ string) ([]List, error) {
-	return []List{{ID: SharedListID, Name: "Gemeinsame Einkaufsliste", Visibility: "shared"}}, nil
+	return []List{{ID: SharedListID, Name: "Tier-Einkaufsliste", Visibility: "shared"}}, nil
 }
 
 func (r *MemoryRepository) Complete(_ context.Context, itemID, userID string, completedAt time.Time) (Item, error) {

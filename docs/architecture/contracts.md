@@ -318,6 +318,7 @@ nicht ressourcenfrei.
 | Grenze | Wert | Quelle |
 | --- | --- | --- |
 | DB-Verbindungspool | max. 5 | `backend/internal/postgres/database.go` |
+| Tierbezug | **Pflicht** bei Ausgabe, Kalendereintrag und Einkaufsartikel; beim Artikel wahlweise `forAllPets` | Migration `000021`, HF-0116 |
 | PostgreSQL `max_connections` | 20 | `kubernetes/base/postgres.yaml` |
 | Gleichzeitige Passwortprüfungen | 1, je ~64 MiB | `passwordConcurrency` in `backend/internal/auth/postgres.go` |
 | Argon2id-Parameter | m=64 MiB, t=3, p=2 | `backend/internal/auth/password.go` — steht im Hash, Änderung entwertet alle Passwörter |

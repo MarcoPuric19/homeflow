@@ -32,6 +32,10 @@ type Item struct {
 	EstimatedPriceCents    *int64     `json:"estimatedPriceCents,omitempty"`
 	EstimatedPriceCurrency string     `json:"estimatedPriceCurrency"`
 	Recurring              bool       `json:"recurring"`
+	// Ein Artikel gehört seit HF-0116 zu einem, zu mehreren oder ausdrücklich
+	// zu allen Tieren. "Alle" ist eine Markierung und nicht die leere Menge -
+	// sonst ist es von "vergessen" nicht zu unterscheiden.
+	ForAllPets bool `json:"forAllPets"`
 }
 
 type MedicationRestockPreview struct {
@@ -49,19 +53,22 @@ type MedicationRestockInput struct {
 }
 
 type CreateItem struct {
-	ListID                 string   `json:"listId"`
-	Name                   string   `json:"name"`
-	Quantity               string   `json:"quantity"`
-	Unit                   string   `json:"unit"`
-	Category               string   `json:"category"`
-	Note                   string   `json:"note"`
-	Priority               Priority `json:"priority"`
-	Store                  string   `json:"store"`
-	PetIDs                 []string `json:"petIds"`
-	PreferredBrand         string   `json:"preferredBrand"`
-	EstimatedPriceCents    *int64   `json:"estimatedPriceCents"`
-	EstimatedPriceCurrency string   `json:"estimatedPriceCurrency"`
-	Recurring              bool     `json:"recurring"`
+	ListID   string   `json:"listId"`
+	Name     string   `json:"name"`
+	Quantity string   `json:"quantity"`
+	Unit     string   `json:"unit"`
+	Category string   `json:"category"`
+	Note     string   `json:"note"`
+	Priority Priority `json:"priority"`
+	Store    string   `json:"store"`
+	PetIDs   []string `json:"petIds"`
+	// Seit HF-0116 muss ein Artikel Tierbezug haben: entweder PetIDs oder
+	// ausdrücklich ForAllPets. Beides leer ist ungültig.
+	ForAllPets             bool   `json:"forAllPets"`
+	PreferredBrand         string `json:"preferredBrand"`
+	EstimatedPriceCents    *int64 `json:"estimatedPriceCents"`
+	EstimatedPriceCurrency string `json:"estimatedPriceCurrency"`
+	Recurring              bool   `json:"recurring"`
 }
 
 type List struct {

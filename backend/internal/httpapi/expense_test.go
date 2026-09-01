@@ -84,7 +84,7 @@ func sprint3Handler(t *testing.T) http.Handler {
 
 func TestExpenseAndReceiptAPI(t *testing.T) {
 	handler := sprint3Handler(t)
-	create := httptest.NewRequest(http.MethodPost, "/api/v1/expenses", bytes.NewBufferString(`{"description":"Groceries","plannedAmountCents":12000,"dueDate":"2026-09-05"}`))
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/expenses", bytes.NewBufferString(`{"petId":"00000000-0000-4000-8000-000000000020","description":"Groceries","plannedAmountCents":12000,"dueDate":"2026-09-05"}`))
 	create.Header.Set("Authorization", "Bearer "+testToken)
 	created := httptest.NewRecorder()
 	handler.ServeHTTP(created, create)

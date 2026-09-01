@@ -139,7 +139,7 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 		t.Fatalf("cross-household document content err=%v", err)
 	}
 	expenseService := expenses.NewService(expenses.NewPostgresRepository(pool))
-	petExpense, err := expenseService.Create(ctx, expenses.CreateExpense{Description: "Tierarzt", PlannedAmountCents: 7500, DueDate: "2026-09-15", PetID: &created.ID, BudgetCategory: "Tierarzt"}, alice)
+	petExpense, err := expenseService.Create(ctx, expenses.CreateExpense{Description: "Tierarzt", PlannedAmountCents: 7500, DueDate: "2026-09-15", PetID: created.ID, BudgetCategory: "Tierarzt"}, alice)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,14 +244,14 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 	calendarService := calendar.NewService(calendar.NewPostgresRepository(pool))
 	petID := created.ID
 	appointmentType := calendar.AppointmentVeterinarian
-	appointment, err := calendarService.Create(ctx, calendar.EventInput{Title: "Tierarzt", StartsAt: time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC), EndsAt: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), PetID: &petID, AppointmentType: &appointmentType}, alice)
-	if err != nil || appointment.PetID == nil || *appointment.PetID != created.ID {
+	appointment, err := calendarService.Create(ctx, calendar.EventInput{Title: "Tierarzt", StartsAt: time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC), EndsAt: time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC), PetID: petID, AppointmentType: &appointmentType}, alice)
+	if err != nil || appointment.PetID == "" || appointment.PetID != created.ID {
 		t.Fatalf("appointment=%#v err=%v", appointment, err)
 	}
 	reminderService := reminders.NewService(reminders.NewPostgresRepository(pool))
 	reminderStart := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
 	reminderAppointment, err := reminderService.CreateAppointment(ctx, alice, firstVaccination.ID, reminders.AppointmentInput{Title: "Impftermin", StartsAt: reminderStart, EndsAt: reminderStart.Add(time.Hour), Visibility: "shared"})
-	if err != nil || reminderAppointment.PetID == nil || *reminderAppointment.PetID != created.ID || reminderAppointment.AppointmentType == nil || *reminderAppointment.AppointmentType != calendar.AppointmentVaccination {
+	if err != nil || reminderAppointment.PetID == "" || reminderAppointment.PetID != created.ID || reminderAppointment.AppointmentType == nil || *reminderAppointment.AppointmentType != calendar.AppointmentVaccination {
 		t.Fatalf("reminder appointment=%#v err=%v", reminderAppointment, err)
 	}
 	if _, err := reminderService.CreateAppointment(ctx, alice, firstVaccination.ID, reminders.AppointmentInput{Title: "Doppelt", StartsAt: reminderStart, EndsAt: reminderStart.Add(time.Hour), Visibility: "private"}); !errors.Is(err, reminders.ErrDuplicate) {
@@ -518,7 +518,7 @@ func TestAuthenticationAndShoppingPersistence(t *testing.T) {
 	}
 
 	service := shopping.NewService(shopping.NewPostgresRepository(pool))
-	item, err := service.Create(ctx, shopping.CreateItem{Name: "Milk", Quantity: "2", Unit: "litres"}, principal.UserID)
+	item, err := service.Create(ctx, shopping.CreateItem{Name: "Milk", Quantity: "2", Unit: "litres", ForAllPets: true}, principal.UserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,8 +530,16 @@ func TestAuthenticationAndShoppingPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Seit HF-0116 gibt es keine Ausgabe ohne Tier. "Groceries" war früher eine
+	// Haushaltsausgabe; der Test prüft weiterhin Anlegen und Bezahlen, jetzt am
+	// Tier.
+	expensePet, err := pets.NewService(pets.NewPostgresRepository(pool)).
+		Create(ctx, principal.UserID, pets.Input{Name: "Ausgabentier", Species: "Katze"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	expenseService := expenses.NewService(expenses.NewPostgresRepository(pool))
-	expense, err := expenseService.Create(ctx, expenses.CreateExpense{Description: "Groceries", PlannedAmountCents: 12000, DueDate: "2026-08-31", Status: expenses.StatusOpen}, principal.UserID)
+	expense, err := expenseService.Create(ctx, expenses.CreateExpense{PetID: expensePet.ID, Description: "Groceries", PlannedAmountCents: 12000, DueDate: "2026-08-31", Status: expenses.StatusOpen}, principal.UserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +602,7 @@ func TestAuthenticationAndShoppingPersistence(t *testing.T) {
 
 	// A receipt must not be readable through a different expense, and that
 	// isolation has to hold in the SQL, not only in the service.
-	other, err := expenseService.Create(ctx, expenses.CreateExpense{Description: "Water", PlannedAmountCents: 4200, DueDate: "2026-08-31", Status: expenses.StatusOpen}, principal.UserID)
+	other, err := expenseService.Create(ctx, expenses.CreateExpense{PetID: expensePet.ID, Description: "Water", PlannedAmountCents: 4200, DueDate: "2026-08-31", Status: expenses.StatusOpen}, principal.UserID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -627,12 +635,22 @@ func TestCalendarPersistence(t *testing.T) {
 	}
 	alice, bob := userID("alice"), userID("bob")
 
+	// Seit HF-0116 gibt es keinen Termin ohne Tier. Der Test hieß früher
+	// "Müllabfuhr" und "Kino" - beides Haushaltstermine, die es fachlich nicht
+	// mehr gibt. Er prüft weiter dasselbe (Sichtbarkeit, Wiederholung,
+	// Erinnerung), jetzt an einem Tier.
+	petService := pets.NewService(pets.NewPostgresRepository(pool))
+	testPet, err := petService.Create(ctx, alice, pets.Input{Name: "Testtier", Species: "Katze"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	service := calendar.NewService(calendar.NewPostgresRepository(pool))
 	instant := func(day, hour int) time.Time { return time.Date(2026, 9, day, hour, 0, 0, 0, time.UTC) }
 	september := calendar.Range{From: instant(1, 0), To: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)}
 
 	reminder := 30
-	shared, err := service.Create(ctx, calendar.EventInput{
+	shared, err := service.Create(ctx, calendar.EventInput{PetID: testPet.ID,
 		Title: "Müllabfuhr", Description: "Biotonne", StartsAt: instant(10, 7), EndsAt: instant(10, 8),
 		Category: "Haushalt", RecurrenceRule: "FREQ=WEEKLY;BYDAY=MO", ReminderMinutes: &reminder,
 	}, alice)
@@ -644,14 +662,14 @@ func TestCalendarPersistence(t *testing.T) {
 	}
 	// An event without a rule must round-trip as an empty string, not as a
 	// scan error on a NULL column.
-	plain, err := service.Create(ctx, calendar.EventInput{Title: "Kino", StartsAt: instant(12, 20), EndsAt: instant(12, 22)}, bob)
+	plain, err := service.Create(ctx, calendar.EventInput{PetID: testPet.ID, Title: "Kino", StartsAt: instant(12, 20), EndsAt: instant(12, 22)}, bob)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if plain.RecurrenceRule != "" || plain.ReminderMinutes != nil {
 		t.Fatalf("event=%#v", plain)
 	}
-	private, err := service.Create(ctx, calendar.EventInput{
+	private, err := service.Create(ctx, calendar.EventInput{PetID: testPet.ID,
 		Title: "Überraschung", StartsAt: instant(20, 18), EndsAt: instant(20, 19), Visibility: calendar.VisibilityPrivate,
 	}, alice)
 	if err != nil {
@@ -678,7 +696,7 @@ func TestCalendarPersistence(t *testing.T) {
 	if _, err := service.Get(ctx, bob, private.ID); !errors.Is(err, calendar.ErrNotFound) {
 		t.Fatalf("get err=%v, want ErrNotFound", err)
 	}
-	if _, err := service.Update(ctx, bob, private.ID, calendar.EventInput{
+	if _, err := service.Update(ctx, bob, private.ID, calendar.EventInput{PetID: testPet.ID,
 		Title: "Geklaut", StartsAt: instant(20, 18), EndsAt: instant(20, 19),
 	}); !errors.Is(err, calendar.ErrNotFound) {
 		t.Fatalf("update err=%v, want ErrNotFound", err)
@@ -687,7 +705,7 @@ func TestCalendarPersistence(t *testing.T) {
 		t.Fatalf("delete err=%v, want ErrNotFound", err)
 	}
 
-	updated, err := service.Update(ctx, bob, shared.ID, calendar.EventInput{
+	updated, err := service.Update(ctx, bob, shared.ID, calendar.EventInput{PetID: testPet.ID,
 		Title: "Müllabfuhr verschoben", StartsAt: instant(11, 7), EndsAt: instant(11, 8), Status: calendar.StatusCompleted,
 	})
 	if err != nil {
@@ -704,7 +722,7 @@ func TestCalendarPersistence(t *testing.T) {
 	}
 
 	// An event that only overlaps the window still belongs in the result.
-	crossing, err := service.Create(ctx, calendar.EventInput{
+	crossing, err := service.Create(ctx, calendar.EventInput{PetID: testPet.ID,
 		Title: "Urlaub", StartsAt: time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC), EndsAt: instant(5, 12),
 	}, alice)
 	if err != nil {

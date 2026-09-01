@@ -31,19 +31,20 @@ const (
 // docs/architecture/domain-model.md requires. ReminderMinutes is stored for the
 // same reason - there is no scheduler that could deliver a reminder yet.
 type Event struct {
-	ID              string           `json:"id"`
-	Title           string           `json:"title"`
-	Description     string           `json:"description,omitempty"`
-	StartsAt        time.Time        `json:"startsAt"`
-	EndsAt          time.Time        `json:"endsAt"`
-	AllDay          bool             `json:"allDay"`
-	Category        string           `json:"category,omitempty"`
-	OwnerID         string           `json:"ownerId"`
-	Visibility      Visibility       `json:"visibility"`
-	RecurrenceRule  string           `json:"recurrenceRule,omitempty"`
-	ReminderMinutes *int             `json:"reminderMinutes,omitempty"`
-	Status          Status           `json:"status"`
-	PetID           *string          `json:"petId,omitempty"`
+	ID              string     `json:"id"`
+	Title           string     `json:"title"`
+	Description     string     `json:"description,omitempty"`
+	StartsAt        time.Time  `json:"startsAt"`
+	EndsAt          time.Time  `json:"endsAt"`
+	AllDay          bool       `json:"allDay"`
+	Category        string     `json:"category,omitempty"`
+	OwnerID         string     `json:"ownerId"`
+	Visibility      Visibility `json:"visibility"`
+	RecurrenceRule  string     `json:"recurrenceRule,omitempty"`
+	ReminderMinutes *int       `json:"reminderMinutes,omitempty"`
+	Status          Status     `json:"status"`
+	// Pflicht seit HF-0116: es gibt keinen Termin mehr ohne Tier.
+	PetID           string           `json:"petId"`
 	AppointmentType *AppointmentType `json:"appointmentType,omitempty"`
 	CreatedAt       time.Time        `json:"createdAt"`
 	UpdatedAt       time.Time        `json:"updatedAt"`
@@ -62,7 +63,7 @@ type EventInput struct {
 	RecurrenceRule  string           `json:"recurrenceRule"`
 	ReminderMinutes *int             `json:"reminderMinutes"`
 	Status          Status           `json:"status"`
-	PetID           *string          `json:"petId,omitempty"`
+	PetID           string           `json:"petId"`
 	AppointmentType *AppointmentType `json:"appointmentType,omitempty"`
 }
 

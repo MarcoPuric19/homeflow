@@ -78,7 +78,7 @@ func (r *PostgresRepository) CreateAppointment(ctx context.Context, userID, sour
 	if err = tx.Commit(ctx); err != nil {
 		return calendar.Event{}, err
 	}
-	event.PetID = &petID
+	event.PetID = petID
 	return event, nil
 }
 

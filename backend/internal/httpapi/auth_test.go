@@ -104,7 +104,7 @@ func TestBrowserLoginSetsProtectedCookies(t *testing.T) {
 
 func TestBrowserMutationRequiresMatchingCSRFToken(t *testing.T) {
 	handler := authServer(t, &fakeSessions{})
-	body := `{"name":"Milk","quantity":"1","priority":"normal"}`
+	body := `{"forAllPets":true,"name":"Milk","quantity":"1","priority":"normal"}`
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/shopping/items", strings.NewReader(body))
 	request.AddCookie(&http.Cookie{Name: accessCookie, Value: testToken})
 	request.AddCookie(&http.Cookie{Name: csrfCookie, Value: "expected"})

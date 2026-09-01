@@ -24,27 +24,30 @@ type Expense struct {
 	RecurrenceRule     string     `json:"recurrenceRule,omitempty"`
 	Status             Status     `json:"status"`
 	UserID             string     `json:"userId"`
-	PetID              *string    `json:"petId,omitempty"`
-	BudgetCategory     string     `json:"budgetCategory,omitempty"`
-	PaymentMethod      string     `json:"paymentMethod,omitempty"`
-	Notes              string     `json:"notes,omitempty"`
-	CreatedAt          time.Time  `json:"createdAt"`
-	UpdatedAt          time.Time  `json:"updatedAt"`
+	// Pflicht seit HF-0116. Der Zeiger war die einzige Stelle, an der "Ausgabe
+	// ohne Tier" überhaupt darstellbar war; solange er bleibt, kommt der Zustand
+	// über irgendeinen Aufrufer zurück.
+	PetID          string    `json:"petId"`
+	BudgetCategory string    `json:"budgetCategory,omitempty"`
+	PaymentMethod  string    `json:"paymentMethod,omitempty"`
+	Notes          string    `json:"notes,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type CreateExpense struct {
-	Description        string  `json:"description"`
-	Merchant           string  `json:"merchant"`
-	PlannedAmountCents int64   `json:"plannedAmountCents"`
-	Currency           string  `json:"currency"`
-	DueDate            string  `json:"dueDate"`
-	Category           string  `json:"category"`
-	RecurrenceRule     string  `json:"recurrenceRule"`
-	Status             Status  `json:"status"`
-	PaymentMethod      string  `json:"paymentMethod"`
-	Notes              string  `json:"notes"`
-	PetID              *string `json:"petId,omitempty"`
-	BudgetCategory     string  `json:"budgetCategory"`
+	Description        string `json:"description"`
+	Merchant           string `json:"merchant"`
+	PlannedAmountCents int64  `json:"plannedAmountCents"`
+	Currency           string `json:"currency"`
+	DueDate            string `json:"dueDate"`
+	Category           string `json:"category"`
+	RecurrenceRule     string `json:"recurrenceRule"`
+	Status             Status `json:"status"`
+	PaymentMethod      string `json:"paymentMethod"`
+	Notes              string `json:"notes"`
+	PetID              string `json:"petId"`
+	BudgetCategory     string `json:"budgetCategory"`
 }
 
 type Budget struct {

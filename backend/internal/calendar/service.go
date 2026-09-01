@@ -148,16 +148,14 @@ func normalise(input EventInput) (EventInput, error) {
 	case input.EndsAt.Before(input.StartsAt):
 		return EventInput{}, ErrInvalid
 	}
-	if input.PetID != nil {
-		value := strings.TrimSpace(*input.PetID)
-		if !id.IsUUID(value) {
-			return EventInput{}, ErrInvalid
-		}
-		input.PetID = &value
-		if input.AppointmentType == nil || !validAppointmentType(*input.AppointmentType) {
-			return EventInput{}, ErrInvalid
-		}
-	} else if input.AppointmentType != nil {
+	// Seit HF-0116 ist das Tier Pflicht. Vorher war der Zweig "kein Tier" der
+	// Normalfall und der Termintyp hing daran; jetzt ist ein fehlendes Tier
+	// schlicht ungültig.
+	input.PetID = strings.TrimSpace(input.PetID)
+	if !id.IsUUID(input.PetID) {
+		return EventInput{}, ErrInvalid
+	}
+	if input.AppointmentType != nil && !validAppointmentType(*input.AppointmentType) {
 		return EventInput{}, ErrInvalid
 	}
 	if input.ReminderMinutes != nil && (*input.ReminderMinutes < 0 || *input.ReminderMinutes > maxReminderMinutes) {
