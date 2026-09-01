@@ -10,7 +10,12 @@ import (
 	"time"
 )
 
-const SharedListID = "00000000-0000-4000-8000-000000000100"
+// PetListID ist die eine Einkaufsliste des Haushalts. Sie hieß bis HF-0116
+// SharedListID und "Gemeinsame Einkaufsliste" - beides beschrieb ein Konzept,
+// das es nicht mehr gibt. Der Behälter bleibt, weil jeder Artikel per
+// Fremdschlüssel daran hängt; was verschwunden ist, ist der Artikel ohne
+// Tierbezug.
+const PetListID = "00000000-0000-4000-8000-000000000100"
 
 type PostgresRepository struct{ pool *pgxpool.Pool }
 
@@ -18,11 +23,11 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-const itemColumns = `i.id::text,i.list_id::text,i.name,i.quantity,i.unit,i.category,i.note,i.priority,i.store,i.added_by::text,i.completed,COALESCE(i.purchased_by::text,''),i.completed_at,i.created_at,i.updated_at,COALESCE(ARRAY(SELECT sip.pet_id::text FROM shopping_item_pets sip WHERE sip.item_id=i.id ORDER BY sip.pet_id),'{}'::text[]),i.source_pet_medication_id::text,i.preferred_brand,i.estimated_price_cents,i.estimated_price_currency,i.recurring`
+const itemColumns = `i.id::text,i.list_id::text,i.name,i.quantity,i.unit,i.category,i.note,i.priority,i.store,i.added_by::text,i.completed,COALESCE(i.purchased_by::text,''),i.completed_at,i.created_at,i.updated_at,COALESCE(ARRAY(SELECT sip.pet_id::text FROM shopping_item_pets sip WHERE sip.item_id=i.id ORDER BY sip.pet_id),'{}'::text[]),i.source_pet_medication_id::text,i.preferred_brand,i.estimated_price_cents,i.estimated_price_currency,i.recurring,i.for_all_pets`
 
 func scanItem(row pgx.Row) (Item, error) {
 	var x Item
-	err := row.Scan(&x.ID, &x.ListID, &x.Name, &x.Quantity, &x.Unit, &x.Category, &x.Note, &x.Priority, &x.Store, &x.AddedBy, &x.Completed, &x.PurchasedBy, &x.CompletedAt, &x.CreatedAt, &x.UpdatedAt, &x.PetIDs, &x.SourcePetMedicationID, &x.PreferredBrand, &x.EstimatedPriceCents, &x.EstimatedPriceCurrency, &x.Recurring)
+	err := row.Scan(&x.ID, &x.ListID, &x.Name, &x.Quantity, &x.Unit, &x.Category, &x.Note, &x.Priority, &x.Store, &x.AddedBy, &x.Completed, &x.PurchasedBy, &x.CompletedAt, &x.CreatedAt, &x.UpdatedAt, &x.PetIDs, &x.SourcePetMedicationID, &x.PreferredBrand, &x.EstimatedPriceCents, &x.EstimatedPriceCurrency, &x.Recurring, &x.ForAllPets)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Item{}, ErrNotFound
 	}
@@ -115,7 +120,7 @@ func (r *PostgresRepository) Create(ctx context.Context, userID string, item Ite
 			return Item{}, ErrInvalid
 		}
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO shopping_items(id,household_id,list_id,name,quantity,unit,category,note,priority,store,added_by,created_at,updated_at,preferred_brand,estimated_price_cents,estimated_price_currency,recurring) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, item.ID, householdID, listID, item.Name, item.Quantity, item.Unit, item.Category, item.Note, item.Priority, item.Store, item.AddedBy, item.CreatedAt, item.UpdatedAt, item.PreferredBrand, item.EstimatedPriceCents, item.EstimatedPriceCurrency, item.Recurring)
+	_, err = tx.Exec(ctx, `INSERT INTO shopping_items(id,household_id,list_id,name,quantity,unit,category,note,priority,store,added_by,created_at,updated_at,preferred_brand,estimated_price_cents,estimated_price_currency,recurring,for_all_pets) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, item.ID, householdID, listID, item.Name, item.Quantity, item.Unit, item.Category, item.Note, item.Priority, item.Store, item.AddedBy, item.CreatedAt, item.UpdatedAt, item.PreferredBrand, item.EstimatedPriceCents, item.EstimatedPriceCurrency, item.Recurring, item.ForAllPets)
 	if err != nil {
 		return Item{}, err
 	}
@@ -192,9 +197,12 @@ func (r *PostgresRepository) Complete(ctx context.Context, itemID, userID string
 	}
 	return Item{}, ErrAlreadyDone
 }
+// normalizeListID nimmt weiterhin "shared" entgegen: bestehende Aufrufer und
+// gespeicherte Anfragen sollen nicht brechen. Neue Aufrufer lassen das Feld
+// leer.
 func normalizeListID(v string) string {
 	if v == "" || v == "shared" {
-		return SharedListID
+		return PetListID
 	}
 	return v
 }

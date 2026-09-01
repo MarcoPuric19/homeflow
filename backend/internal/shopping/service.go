@@ -76,6 +76,13 @@ func (s *Service) Create(ctx context.Context, input CreateItem, userID string) (
 	if !input.ForAllPets && len(input.PetIDs) == 0 {
 		return Item{}, ErrInvalid
 	}
+	// "Für alle Tiere" UND eine Auswahl ist ein Widerspruch, kein Sonderfall:
+	// er lässt offen, was gemeint war. Codex hat das im Gegencheck zu HF-0116
+	// gefunden - Dienst und OpenAPI sagten "entweder oder", abgelehnt wurde es
+	// nicht.
+	if input.ForAllPets && len(input.PetIDs) > 0 {
+		return Item{}, ErrInvalid
+	}
 	for _, pet := range input.PetIDs {
 		if !id.IsUUID(pet) {
 			return Item{}, ErrInvalid
@@ -109,6 +116,7 @@ func (s *Service) Create(ctx context.Context, input CreateItem, userID string) (
 		ID: itemID, ListID: input.ListID, Name: input.Name, Quantity: input.Quantity,
 		Unit: input.Unit, Category: input.Category, Note: input.Note, Priority: input.Priority,
 		Store: input.Store, AddedBy: userID, CreatedAt: now, UpdatedAt: now, PetIDs: input.PetIDs, PreferredBrand: input.PreferredBrand, EstimatedPriceCents: input.EstimatedPriceCents, EstimatedPriceCurrency: input.EstimatedPriceCurrency, Recurring: input.Recurring,
+		ForAllPets: input.ForAllPets,
 	})
 }
 

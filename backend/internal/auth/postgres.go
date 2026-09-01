@@ -118,7 +118,7 @@ func Bootstrap(ctx context.Context, pool *pgxpool.Pool, users [2]BootstrapUser) 
 		return fmt.Errorf("assign bootstrap users to household: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO shopping_lists(id,household_id,name,visibility)
-		VALUES($1,$2,'Gemeinsame Einkaufsliste','shared') ON CONFLICT DO NOTHING`, shopping.SharedListID, defaultHouseholdID); err != nil {
+		VALUES($1,$2,'Tier-Einkaufsliste','shared') ON CONFLICT DO NOTHING`, shopping.PetListID, defaultHouseholdID); err != nil {
 		return fmt.Errorf("create shared shopping list: %w", err)
 	}
 	return tx.Commit(ctx)
@@ -133,7 +133,7 @@ func ensureHouseholdMemberships(ctx context.Context, pool *pgxpool.Pool) error {
 
 func ensureSharedList(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, `INSERT INTO shopping_lists(id,household_id,name,visibility)
-		VALUES($1,$2,'Gemeinsame Einkaufsliste','shared') ON CONFLICT DO NOTHING`, shopping.SharedListID, defaultHouseholdID)
+		VALUES($1,$2,'Tier-Einkaufsliste','shared') ON CONFLICT DO NOTHING`, shopping.PetListID, defaultHouseholdID)
 	return err
 }
 

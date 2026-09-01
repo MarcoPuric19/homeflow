@@ -345,8 +345,44 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 	}
 	shoppingService := shopping.NewService(shopping.NewPostgresRepository(pool))
 	lists, err := shoppingService.Lists(ctx, alice)
-	if err != nil || len(lists) != 1 || lists[0].ID != shopping.SharedListID {
+	if err != nil || len(lists) != 1 || lists[0].ID != shopping.PetListID {
 		t.Fatalf("lists=%#v err=%v", lists, err)
+	}
+	// Die Liste heißt nach HF-0116 nach dem, was sie ist. Der Bootstrap legt sie
+	// an, nicht die Migration - ein Umbenennen in der Migration allein hätte auf
+	// einer frischen Installation nichts genützt (Gegencheck Codex, Punkt 2).
+	if lists[0].Name != "Tier-Einkaufsliste" {
+		t.Fatalf("Listenname=%q, erwartet Tier-Einkaufsliste", lists[0].Name)
+	}
+
+	// forAllPets muss die Datenbank überleben. Der Dienst hatte das Feld
+	// zuerst validiert und dann weggeworfen: weder INSERT noch SELECT kannten
+	// die Spalte, und ein Test, der nur auf err==nil prüft, sieht das nicht
+	// (Gegencheck Codex, Punkt 1).
+	fuerAlle, err := shoppingService.Create(ctx, shopping.CreateItem{
+		Name: "Katzenstreu", Quantity: "1", EstimatedPriceCurrency: "EUR", ForAllPets: true,
+	}, alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fuerAlle.ForAllPets {
+		t.Fatal("forAllPets ging beim INSERT verloren")
+	}
+	gelesen, err := shoppingService.List(ctx, alice, "", false, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gefunden bool
+	for _, item := range gelesen {
+		if item.ID == fuerAlle.ID {
+			gefunden = true
+			if !item.ForAllPets {
+				t.Fatal("forAllPets ist nach erneutem Lesen aus PostgreSQL weg")
+			}
+		}
+	}
+	if !gefunden {
+		t.Fatal("der als für alle Tiere angelegte Artikel fehlt in der Liste")
 	}
 	if _, err := service.UpdateMedicationStock(ctx, alice, created.ID, medication.ID, pets.MedicationStockInput{StockQuantity: "2.000"}); err != nil {
 		t.Fatal(err)

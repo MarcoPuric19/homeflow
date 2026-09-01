@@ -75,3 +75,40 @@ func TestItemWithoutAnyPetScopeIsRejected(t *testing.T) {
 		t.Fatalf("ungültige Tier-ID muss abgelehnt werden, err=%v", err)
 	}
 }
+
+// Codex' Gegencheck zu HF-0116, Punkt 1: forAllPets wurde geprüft und dann
+// weggeworfen. Der alte Test sah nur, dass Create keinen Fehler liefert - das
+// ist genau der Test, der nichts beweist. Dieser hier liest den Wert zurück.
+func TestForAllPetsSurvivesTheRoundTrip(t *testing.T) {
+	service := NewService(NewMemoryRepository())
+	created, err := service.Create(context.Background(), CreateItem{
+		Name: "Katzenstreu", Quantity: "1", EstimatedPriceCurrency: "EUR", ForAllPets: true,
+	}, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created.ForAllPets {
+		t.Fatal("forAllPets ging beim Anlegen verloren")
+	}
+
+	items, err := service.List(context.Background(), "user-1", "", false, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || !items[0].ForAllPets {
+		t.Fatalf("forAllPets ist nach erneutem Lesen weg: %#v", items)
+	}
+}
+
+// Punkt 3 desselben Gegenchecks: "entweder oder" stand in Dienst und OpenAPI,
+// abgelehnt wurde die Kombination nicht. Sie lässt offen, was gemeint war.
+func TestForAllPetsTogetherWithPetIDsIsRejected(t *testing.T) {
+	service := NewService(NewMemoryRepository())
+	_, err := service.Create(context.Background(), CreateItem{
+		Name: "Katzenstreu", Quantity: "1", EstimatedPriceCurrency: "EUR",
+		ForAllPets: true, PetIDs: []string{"9f1d2c3b-4a5e-4f60-8123-abcdefabcdef"},
+	}, "user-1")
+	if err != ErrInvalid {
+		t.Fatalf("Widerspruch muss abgelehnt werden, err=%v", err)
+	}
+}
