@@ -29,6 +29,15 @@ die `curl`-Beispiele in `README.md`, Tests in `backend/internal/httpapi/*_test.g
 Die OpenAPI ist die Referenz, nicht das Protokoll des Codes. Neue oder
 geänderte Routen zuerst dort, dann implementieren.
 
+**Angekündigte Änderung, von Marco am 2026-09-01 freigegeben (HF-0120, V2.2):**
+`/api/v1/receipts` und `/api/v1/expenses/{id}/receipts[...]` gehen in
+`/api/v1/documents` auf. Die alten Routen antworten übergangsweise mit 308. Der
+Grund ist nicht Ordnungsliebe: es gibt heute zwei Uploadwege für dasselbe, mit
+unterschiedlicher Prüfung, und niemand weiß, wo ein Dokument landet. Die
+sicherheitsrelevanten Teile aus `receipts/storage.go` — Magic Bytes,
+serverseitiger Speicherschlüssel, 10-MiB-Grenze — werden übernommen und nicht
+neu geschrieben.
+
 Aktueller Stand: `/health`, `/metrics`, `/api/v1/auth/{login,refresh,logout}`,
 `/api/v1/auth/browser/{login,refresh,logout}`, `/api/v1/shopping/items[/{id}/complete]`,
 `/api/v1/expenses[/{id}/paid]`, `/api/v1/expense-summaries/{month}`,
@@ -243,10 +252,17 @@ mit und prüft die Summe.
 | Grafana | 160 MiB / 20 mCPU | 256 MiB / 200 mCPU | 165 MiB | `monitoring/kubernetes/grafana.yaml` |
 | kube-state-metrics | 64 MiB / 10 mCPU | 128 MiB / 100 mCPU | 63 MiB | `monitoring/kubernetes/kube-state-metrics.yaml` |
 | **Monitoring gesamt** | **384 MiB / 80 mCPU** | **768 MiB / 600 mCPU** | 361 MiB | `monitoring/README.md` |
+| OCR-Worker (geplant, HF-0123) | 96 MiB / 50 mCPU | **256 MiB** / 500 mCPU | 71 MiB | `kubernetes/base/worker-deployment.yaml` |
 
 Die Spalte „gemessene Spitze" stammt aus dem cAdvisor-Scrape und ist mit
 `scripts/resource-report.sh` reproduzierbar; Herleitung und Optionen stehen in
 `docs/operations/resource-budget.md`.
+
+Die 71 MiB des OCR-Workers stammen abweichend davon aus dem Benchmark in
+ADR 0009 — der Pod existiert noch nicht, gemessen wurde an denselben zehn echten
+Belegen im selben Image, das später ausgerollt wird. **Marco hat die 256 MiB am
+2026-09-01 freigegeben.** Damit steigen die Requests von 672 auf 768 MiB von
+3444 MiB allocatable.
 
 **Requests sind auf diesem Cluster kein Scheduling-Detail.** Der kind-Knoten
 meldet `allocatable` = `capacity` und hat keine `evictionHard.memory.available`,

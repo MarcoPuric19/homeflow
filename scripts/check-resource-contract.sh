@@ -27,6 +27,7 @@ RENDER_DIR="$TMP" exec python3 - <<'PY'
 import os, re, sys, yaml
 
 MIB = 2 ** 20
+warnungen = []
 CONTRACTS = "docs/architecture/contracts.md"
 KIND = "kubernetes/kind-cluster.yaml"
 fehler = []
@@ -102,7 +103,18 @@ for m in zeile.finditer(abschnitt.replace("**", "")):
         continue
     container = quelle_von.get(pfade[0])
     if container is None:
-        fehler.append(f"Zeile '{name}': {pfade[0]} enthält kein Deployment/StatefulSet")
+        # Eine freigegebene Zahl darf im Vertrag stehen, bevor das Manifest
+        # existiert - genau so ist der OCR-Worker entstanden: Marco gibt 256 MiB
+        # frei, gebaut wird es zwei Tickets später. Das ist kein Drift.
+        #
+        # Damit es aber nicht auf Dauer unbemerkt dort steht, muss die Zeile es
+        # sagen. "(geplant" im Namen ist die Kennzeichnung, und der Lauf meldet
+        # sie als Warnung statt sie zu verschweigen.
+        if "geplant" in name.lower():
+            warnungen.append(f"Zeile '{name}': freigegeben, Manifest {pfade[0]} "
+                             "gibt es noch nicht")
+        else:
+            fehler.append(f"Zeile '{name}': {pfade[0]} enthält kein Deployment/StatefulSet")
         continue
     if container not in ist:
         fehler.append(f"Zeile '{name}': Container '{container}' nicht im Rendering")
@@ -163,6 +175,8 @@ if hostkb and reserviert:
     elif anteil > 80:
         print(f"  WARNUNG  über 80 % von allocatable belegt")
 
+for w in warnungen:
+    print(f"  WARNUNG  {w}")
 for f in fehler:
     print(f"  FEHLER   {f}")
 sys.exit(1 if fehler else 0)
