@@ -160,7 +160,21 @@ Vergeben: `000018_medication_shopping_origin` (Codex, HF-0068)
 Vergeben: `000019_pet_shopping_metadata` (Codex, HF-0070)
 Vergeben: `000020_pet_budget_warning_threshold` (Codex, HF-0069)
 
-Weitere Reservierungen: *(noch nichts)*
+Reserviert für HomeFlow v2 (Epic HF-0114), in Release-Reihenfolge. Die Nummer
+steht hier, **bevor** die Datei geschrieben wird — `make check-migrations`
+verweigert seit HF-0098 jede Migration, die hier fehlt.
+
+Reserviert: `000021_pet_scope` (V2.0, HF-0116)
+Reserviert: `000022_veterinarians` (V2.1, HF-0117)
+Reserviert: `000023_medical_encounters` (V2.1, HF-0118)
+Reserviert: `000024_document_central` (V2.2, HF-0120)
+Reserviert: `000025_outbox_idempotency` (V2.3, HF-0121)
+Reserviert: `000026_expense_encounter` (V2.4, HF-0122)
+Reserviert: `000027_ocr_jobs` (V2.5, HF-0124, Kandidatentabelle aus HF-0125 gehört mit hinein)
+Reserviert: `000028_insurance` (V2.6, HF-0127)
+Reserviert: `000029_inventory_shopping` (V2.7, HF-0128)
+Reserviert: `000030_lab_reports` (später)
+Reserviert: `000031_notifications` (später)
 
 Migrationen laufen beim API-Start unter einem PostgreSQL Advisory Lock. Sie
 sind eingebettet (`migrations/embed.go`), d.h. eine neue Datei wirkt erst nach

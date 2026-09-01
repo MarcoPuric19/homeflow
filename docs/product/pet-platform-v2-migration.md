@@ -71,11 +71,19 @@ This deviates from the order in the brief in two places, both deliberate.
 | **V2.2** | Document central: `receipts` merged in, `document_links`, document types, inbox |
 | **V2.3** | Outbox writer, domain events, idempotency constraints |
 | **V2.4** | Expenses and budgets against encounters; manual receipt → expense |
-| **V2.5** | Insurance: policy, claim, reimbursement |
-| **V2.6** | Medication, inventory, pet shopping list, restock suggestions |
-| **V2.7** | Vaccinations and reminder automation |
-| **V2.8** | OCR — **behind the benchmark gate**: engine, worker, extraction, review |
+| **V2.5** | OCR — **the gate is open**, see below: worker, job queue, extraction, review |
+| **V2.6** | Insurance: policy, claim, reimbursement |
+| **V2.7** | Medication, inventory, pet shopping list, restock suggestions |
+| **V2.8** | Vaccinations and reminder automation |
 | **V2.9** | UX, performance, security hardening; audit trail completion |
+
+### The OCR gate opened on 2026-09-01
+
+ADR 0009 measured it on the real documents: 71 MiB peak against a 256 MiB
+budget, 2.4 to 4.8 seconds per scan. HF-0084's trigger is met, so OCR moved from
+V2.8 to V2.5 — directly behind expenses, which is what it writes into. The
+paragraph below explains why it was placed last while the number was unknown; it
+is kept because the reasoning still applies to the next gated decision.
 
 ### Why timeline and encounters are one release, not two
 
