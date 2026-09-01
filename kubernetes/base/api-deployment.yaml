@@ -27,7 +27,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: localhost:5000/homeflow/api:0.15.3
+          image: localhost:5000/homeflow/api:0.15.11
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -51,7 +51,18 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 2
           resources:
-            requests: { cpu: 10m, memory: 32Mi }
+            # Der Request ist hier kein Scheduling-Detail. Die kubelet-Eviction
+            # ist auf diesem Cluster abgeschaltet und allocatable = capacity,
+            # also entscheidet bei Speichermangel der Host-Kernel - nach
+            # oom_score_adj, und der ergibt sich bei Burstable aus
+            # 1000 - 1000 * request / capacity. Mit 32 MiB angefordert bei
+            # 142 MiB echtem Verbrauch stand die API auf 996 und damit fast
+            # ganz vorn in der Reihe (HF-0086 Befund 3, HF-0087 Option C).
+            #
+            # 160 MiB liegen über dem gemessenen Verbrauch und unter dem Limit.
+            # Kostet nichts, solange die Summe der Requests unter allocatable
+            # bleibt - aktuell rund 960 MiB von 7285.
+            requests: { cpu: 10m, memory: 160Mi }
             limits: { cpu: 200m, memory: 192Mi }
           securityContext:
             allowPrivilegeEscalation: false

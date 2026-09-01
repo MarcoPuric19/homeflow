@@ -42,6 +42,17 @@ type TokenPair struct {
 	TokenType        string    `json:"tokenType"`
 }
 
+// passwordConcurrency bounds how many Argon2id verifications may run at once.
+// It is not a throughput knob: each one allocates argonMemory of anonymous
+// memory that nothing can reclaim under pressure, so this number multiplied by
+// argonMemory is the floor the container limit has to clear.
+//
+// It was 2. Two concurrent logins drove the pod's cgroup to 191.8 MiB of its
+// 192 MiB limit and the kernel killed it - measured, with the OOM trace, in
+// HF-0086. Serialising costs the second login the duration of the first hash,
+// roughly 100 to 200 ms, and nothing else.
+const passwordConcurrency = 1
+
 type PostgresService struct {
 	pool          *pgxpool.Pool
 	now           func() time.Time
@@ -49,7 +60,8 @@ type PostgresService struct {
 }
 
 func NewPostgresService(pool *pgxpool.Pool) *PostgresService {
-	return &PostgresService{pool: pool, now: func() time.Time { return time.Now().UTC() }, passwordSlots: make(chan struct{}, 2)}
+	return &PostgresService{pool: pool, now: func() time.Time { return time.Now().UTC() },
+		passwordSlots: make(chan struct{}, passwordConcurrency)}
 }
 
 func Bootstrap(ctx context.Context, pool *pgxpool.Pool, users [2]BootstrapUser) error {
@@ -125,13 +137,26 @@ func ensureSharedList(ctx context.Context, pool *pgxpool.Pool) error {
 	return err
 }
 
-func (s *PostgresService) Login(ctx context.Context, credentials Credentials, sourceIP string) (TokenPair, error) {
+// withPasswordSlot runs work while holding one of the passwordConcurrency
+// slots, and blocks until a slot is free or the caller gives up.
+//
+// The slot exists to bound memory, and only Argon2 allocates any, so it is
+// taken as late as possible and given back immediately. It used to wrap all of
+// Login - database query, audit write and token minting included - which was
+// invisible at a capacity of two and serialised the whole login at a capacity
+// of one.
+func (s *PostgresService) withPasswordSlot(ctx context.Context, work func()) error {
 	select {
 	case s.passwordSlots <- struct{}{}:
 		defer func() { <-s.passwordSlots }()
 	case <-ctx.Done():
-		return TokenPair{}, ctx.Err()
+		return ctx.Err()
 	}
+	work()
+	return nil
+}
+
+func (s *PostgresService) Login(ctx context.Context, credentials Credentials, sourceIP string) (TokenPair, error) {
 	var principal Principal
 	var passwordHash string
 	var disabled bool
@@ -139,14 +164,27 @@ func (s *PostgresService) Login(ctx context.Context, credentials Credentials, so
         FROM users WHERE username=$1`, credentials.Username).Scan(
 		&principal.UserID, &principal.Username, &principal.Role, &passwordHash, &disabled)
 	if errors.Is(err, pgx.ErrNoRows) {
-		consumePasswordWork(credentials.Password)
+		// The dummy verification keeps the response time of an unknown user
+		// indistinguishable from a wrong password, so it costs the same Argon2
+		// memory and takes the same slot. Skipping it here would turn the
+		// timing defence into the way around the memory bound.
+		if err := s.withPasswordSlot(ctx, func() { consumePasswordWork(credentials.Password) }); err != nil {
+			return TokenPair{}, err
+		}
 		_ = s.audit(ctx, "auth.login.failed", "", sourceIP, `{"reason":"invalid_credentials"}`)
 		return TokenPair{}, ErrUnauthenticated
 	}
 	if err != nil {
 		return TokenPair{}, err
 	}
-	valid, err := VerifyPassword(credentials.Password, passwordHash)
+	var valid bool
+	var verifyErr error
+	if err := s.withPasswordSlot(ctx, func() {
+		valid, verifyErr = VerifyPassword(credentials.Password, passwordHash)
+	}); err != nil {
+		return TokenPair{}, err
+	}
+	err = verifyErr
 	if err != nil || !valid || disabled {
 		_ = s.audit(ctx, "auth.login.failed", principal.UserID, sourceIP, `{"reason":"invalid_credentials"}`)
 		return TokenPair{}, ErrUnauthenticated
