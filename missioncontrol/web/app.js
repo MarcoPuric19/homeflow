@@ -233,7 +233,7 @@ function renderCluster(snapshot) {
 let logPod = null;
 let logLines = 200;
 let logTimer = null;
-let logState = { levels: new Set(), text: "", fields: [] };
+let logState = { levels: new Set(), text: "", fields: [], from: null, to: null };
 let logData = null;
 
 const LEVEL_ORDER = ["ERROR", "WARN", "INFO", "DEBUG", "UNBEKANNT"];
@@ -276,6 +276,8 @@ function logQuery() {
   if (logState.levels.size) params.set("level", [...logState.levels].join(","));
   if (logState.text) params.set("q", logState.text);
   for (const filter of logState.fields) params.append("feld", `${filter.name}:${filter.value}`);
+  if (logState.from) params.set("von", String(logState.from));
+  if (logState.to) params.set("bis", String(logState.to));
   return "/api/logs?" + params.toString();
 }
 
@@ -314,6 +316,13 @@ function renderLog() {
   if (logState.text) {
     const chip = el("button", { class: "chip" }, `Text: ${logState.text} ✕`);
     chip.addEventListener("click", () => { logState.text = ""; $("#logSearch").value = ""; void loadLog(); });
+    chips.push(chip);
+  }
+  if (logState.from || logState.to) {
+    const clock = (millis) => millis ? new Date(millis).toLocaleTimeString("de-DE") : "…";
+    const chip = el("button", { class: "chip range" },
+      `Zeitraum: ${clock(logState.from)} – ${clock(logState.to)} ✕`);
+    chip.addEventListener("click", () => { logState.from = null; logState.to = null; void loadLog(); });
     chips.push(chip);
   }
   chips.push(el("span", { class: "hint" },
@@ -358,8 +367,64 @@ function renderHistogram(data) {
   svg.append(svgEl("text", { class: "axis", x: width - pad, y: height - 4, "text-anchor": "end" }, last));
   const seconds = Math.round((data.bucketMs ?? 0) / 1000);
   svg.append(svgEl("text", { class: "axis", x: width / 2, y: height - 4, "text-anchor": "middle" },
-    `ein Balken = ${seconds || 1} s`));
+    `ein Balken = ${seconds || 1} s · ziehen wählt einen Zeitraum`));
+
+  attachRangeSelection(svg, buckets, data.bucketMs ?? 1000, { width, height, pad, step });
   target.replaceChildren(svg);
+}
+
+// Dragging across the histogram is the fastest way to say "show me what
+// happened around then". The mapping goes through the bucket timestamps the
+// server sent, so the selection means the same thing the bars mean.
+function attachRangeSelection(svg, buckets, bucketMs, box) {
+  const selection = svgEl("rect", { class: "selection", y: 6, height: box.height - 24, width: 0, x: 0 });
+  svg.append(selection);
+
+  // A transparent surface over the whole plot: without it the pointer only
+  // reacts on the bars themselves, and the gaps between them would swallow
+  // half the drags.
+  const surface = svgEl("rect", { class: "surface", x: box.pad, y: 0,
+    width: box.width - 2 * box.pad, height: box.height - 18 });
+  svg.append(surface);
+
+  const timeAt = (x) => {
+    const index = Math.max(0, Math.min(buckets.length - 1, Math.floor((x - box.pad) / box.step)));
+    return new Date(buckets[index].zeit).getTime();
+  };
+  const svgX = (event) => {
+    const rect = svg.getBoundingClientRect();
+    return ((event.clientX - rect.left) / rect.width) * box.width;
+  };
+
+  let start = null;
+  surface.addEventListener("pointerdown", (event) => {
+    start = svgX(event);
+    surface.setPointerCapture(event.pointerId);
+    selection.setAttribute("x", String(start));
+    selection.setAttribute("width", "0");
+  });
+  surface.addEventListener("pointermove", (event) => {
+    if (start === null) return;
+    const current = svgX(event);
+    selection.setAttribute("x", String(Math.min(start, current)));
+    selection.setAttribute("width", String(Math.abs(current - start)));
+  });
+  const finish = (event) => {
+    if (start === null) return;
+    const end = svgX(event);
+    const [left, right] = [Math.min(start, end), Math.max(start, end)];
+    start = null;
+    selection.setAttribute("width", "0");
+    // Ein Klick ist keine Auswahl: unter ein paar Pixeln bleibt alles, wie es
+    // war, sonst löscht ein Fehlklick den Blick auf alles.
+    if (right - left < 4) return;
+    logState.from = timeAt(left);
+    // Das rechte Ende schließt den getroffenen Balken mit ein.
+    logState.to = timeAt(right) + bucketMs;
+    void loadLog();
+  };
+  surface.addEventListener("pointerup", finish);
+  surface.addEventListener("pointercancel", () => { start = null; selection.setAttribute("width", "0"); });
 }
 
 // The sidebar answers questions before they are typed: which status codes
@@ -549,7 +614,16 @@ function ticketCard(ticket, compact) {
     el("span", { class: "id" }, ticket.key),
     el("span", { class: "prio " + (ticket.priority || "").toLowerCase(), title: "Priorität " + ticket.priority }, PRIORITY_MARK[ticket.priority] ?? ""),
     el("span", { class: "title" }, ticket.title),
-    ...(ticket.version ? [el("span", { class: "version" }, "v" + ticket.version)] : []),
+    // Zwei verschiedene Aussagen, deshalb zwei verschiedene Marken: worin es
+    // gefunden wurde, und worin es ausgeliefert ist. Eine Zahl für beides hat
+    // jedes offene Ticket behaupten lassen, zu einer fertigen Release zu
+    // gehören.
+    ...(ticket.delivered
+      ? [el("span", { class: "version shipped", title: "ausgeliefert in" }, "✓ " + ticket.delivered)]
+      : []),
+    ...(ticket.version
+      ? [el("span", { class: "version found", title: "gefunden in Version " + ticket.version }, "gef. " + ticket.version)]
+      : []),
     ...(compact ? [] : [el("span", { class: "tag" }, ticket.owner || "offen")]),
     ...(ticket.component ? [el("span", { class: "tag" }, ticket.component)] : []),
     ...((ticket.scope ?? []).length ? [el("span", { class: "tag scope", title: ticket.scope.join(", ") },
@@ -575,7 +649,7 @@ function fieldRow(ticket) {
     node.addEventListener("change", () => change(field, node.value));
     return node;
   };
-  const version = el("input", { value: ticket.version ?? "", size: "8", title: "Version" });
+  const version = el("input", { value: ticket.version ?? "", size: "8", title: "gefunden in Version" });
   version.addEventListener("change", () => change("version", version.value));
   // Der Scope ist die Verbindung zum Repo: er macht aus einem Ticket in
   // Bearbeitung einen Claim auf Dateien.
@@ -719,11 +793,36 @@ async function loadDeploy() {
       ...data.pipelines.map((pipeline) => {
         const check = checks[pipeline.name] ?? {};
         const changes = check.aenderungen ?? [];
-        const blocked = !changes.length && !check.fehler;
+        // Gesperrt wird nur, was ein laufendes System verändert. Ein Ablauf,
+        // der bloß prüft und baut, kostet zwanzig Sekunden und richtet keinen
+        // Schaden an - ihn zu sperren hieße, jemanden auszusperren, der genau
+        // das will.
+        const blocked = pipeline.brauchtCluster && !changes.length && !check.fehler;
         const button = el("button", { class: pipeline.brauchtCluster ? "primary" : "quiet" },
           running ? "läuft …" : blocked ? "nichts zu tun" : pipeline.titel);
         if (running || blocked) button.setAttribute("disabled", "disabled");
-        button.addEventListener("click", () => startDeploy(pipeline, false));
+
+        // Die Tickets, die dieser Ablauf abnehmen kann, stehen als Kästchen da -
+        // vorausgewählt, aber abwählbar. Wer sie abtippen muss, startet den Lauf
+        // dreimal; wer sie gar nicht sieht, schließt versehentlich fremde Arbeit.
+        const covered = (data.abnahme ?? []).filter((entry) => entry.pipeline === pipeline.name);
+        const boxes = covered.map((entry) => {
+          const input = el("input", { type: "checkbox", checked: "checked" });
+          return { key: entry.key, input,
+            node: el("label", { class: "ticketbox" }, input,
+              el("span", {}, `${entry.key} — ${entry.titel}`)) };
+        });
+        const selected = () => boxes.filter((box) => box.input.checked).map((box) => box.key);
+        const refreshLabel = () => {
+          if (running || blocked) return;
+          const count = selected().length;
+          button.textContent = count
+            ? `${pipeline.titel} (${count} Ticket${count === 1 ? "" : "s"})`
+            : pipeline.titel;
+        };
+        for (const box of boxes) box.input.addEventListener("change", refreshLabel);
+        refreshLabel();
+        button.addEventListener("click", () => startDeploy(pipeline, false, selected()));
 
         const status = changes.length
           ? el("ul", { class: "changes" }, ...changes.map((change) =>
@@ -731,12 +830,12 @@ async function loadDeploy() {
           : el("p", { class: "hint nothing" }, check.fehler || check.hinweis || "Wird geprüft …");
 
         const side = el("div", { class: "pipeline-actions" }, button);
-        if (blocked && pipeline.brauchtCluster) {
+        if (blocked) {
           // Quelltext, der sich ohne Versionssprung geändert hat, sieht die
           // Prüfung nicht. Deshalb gibt es einen Ausweg - benannt als das,
           // was er ist.
           const force = el("button", { class: "quiet tiny" }, "trotzdem deployen");
-          force.addEventListener("click", () => startDeploy(pipeline, true));
+          force.addEventListener("click", () => startDeploy(pipeline, true, selected()));
           side.append(force);
         }
         return el("div", { class: "pipeline" + (blocked ? " blocked" : "") },
@@ -745,12 +844,52 @@ async function loadDeploy() {
             ...(pipeline.brauchtCluster ? [el("span", { class: "tag warnrot" }, "verändert den Cluster")] : [el("span", { class: "tag" }, "ändert nichts")]),
             el("p", { class: "hint" }, pipeline.beschreibung),
             status,
+            ...(boxes.length
+              ? [el("div", { class: "ticketboxes" },
+                  el("p", { class: "hint" }, "Nimmt bei Erfolg ab:"), ...boxes.map((box) => box.node))]
+              : []),
             ...(check.geprueft?.length ? [el("p", { class: "hint checked" }, "Geprüft: " + check.geprueft.join(" · "))] : []),
             el("code", { class: "steps" }, pipeline.schritte.map((s) => "make " + s.args.join(" ")).join("  →  "))),
           side);
       }));
 
-    const cards = [pipelines];
+    // Ein gebautes, aber nicht übernommenes Binary ist der Zustand, den man
+    // sonst vergisst - deshalb steht der Neustart neben den Abläufen und nicht
+    // in einem Menü.
+    const restart = el("section", { class: "card" },
+      el("h2", {}, "Dienst neu starten"),
+      el("p", { class: "hint" },
+        "Übernimmt ein neu gebautes Mission-Control-Binary. Die Seite verliert dabei kurz die Verbindung."));
+    const restartButton = el("button", { class: "quiet" }, "Neu starten");
+    restartButton.addEventListener("click", async () => {
+      if (!confirm("Mission Control neu starten? Die Verbindung bricht für ein paar Sekunden ab.")) return;
+      try {
+        await api("/api/deploy/restart", { method: "POST" });
+        banner("Neustart läuft - die Seite lädt gleich neu.");
+        setTimeout(() => location.reload(), 4000);
+      } catch (error) {
+        banner(error.message);
+      }
+    });
+    restart.append(restartButton);
+
+    // Die Frage, die diese Ansicht bisher offen ließ: was wartet auf Abnahme,
+    // und kann ein Deploy sie überhaupt geben?
+    const waiting = data.abnahme ?? [];
+    const acceptance = el("section", { class: "card" },
+      el("h2", {}, "Wartet auf Abnahme"),
+      el("p", { class: "hint" }, waiting.length
+        ? "Tickets in der Spalte Test. Ein erfolgreicher Deploy zieht nur die auf Fertig, deren Pfade er auch ausrollt."
+        : "Nichts steht auf Test."),
+      ...waiting.map((entry) => el("div", { class: "waiting" + (entry.pipeline ? "" : " unreachable") },
+        el("b", {}, entry.key),
+        el("span", { class: "titel" }, entry.titel),
+        el("span", { class: "tag" }, entry.zustaendig),
+        entry.pipeline
+          ? el("span", { class: "tag ok" }, "→ " + entry.pipeline)
+          : el("span", { class: "hint" }, entry.grund))));
+
+    const cards = [pipelines, acceptance, restart];
     if (data.laufend) cards.push(runCard(data.laufend, !!running));
     if (data.verlauf?.length) {
       cards.push(el("section", { class: "card" }, el("h2", {}, "Verlauf"),
@@ -793,16 +932,18 @@ function runCard(run, isRunning) {
   return card;
 }
 
-async function startDeploy(pipeline, force) {
-  const warning = force
-    ? "\n\nACHTUNG: Die Prüfung hat keine Änderung gefunden. Dieser Lauf wird erzwungen und als erzwungen protokolliert."
-    : "";
-  const ticket = prompt(
-    `${pipeline.titel}\n\n${pipeline.beschreibung}${warning}\n\nOptional: Ticketschlüssel, unter dem das protokolliert wird (z. B. MC-0001). Leer lassen geht auch.\n\nAbbrechen bricht ab.`,
-    "");
-  if (ticket === null) return;
+async function startDeploy(pipeline, force, ticketKeys) {
+  const keys = ticketKeys ?? [];
+  const lines = [pipeline.titel, "", pipeline.beschreibung];
+  if (force) {
+    lines.push("", "ACHTUNG: Die Prüfung hat keine Änderung gefunden. Dieser Lauf wird erzwungen und als erzwungen protokolliert.");
+  }
+  lines.push("", keys.length
+    ? "Nimmt bei Erfolg ab: " + keys.join(", ")
+    : "Es wird kein Ticket abgenommen.");
+  if (!confirm(lines.join("\n"))) return;
   await act2(() => api("/api/deploy", jsonBody({
-    pipeline: pipeline.name, author: author(), ticket: ticket.trim(), trotzdem: !!force,
+    pipeline: pipeline.name, author: author(), tickets: keys, trotzdem: !!force,
   })));
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -588,6 +589,10 @@ func deployServer(t *testing.T, contextName string) (*Server, *tickets.Store) {
 	server.deploy = deploy.NewRunner(dir,
 		write("make", "#!/bin/sh\necho \"ok $*\"\n"),
 		write("kubectl", "#!/bin/sh\necho "+contextName+"\n"))
+	// New() verdrahtet den Rückruf, wenn der Runner beim Bauen schon da ist.
+	// Hier wird er nachträglich gesetzt, also muss das hier auch passieren -
+	// sonst testet der Helfer eine Verdrahtung, die es nicht gibt.
+	server.deploy.OnFinish = server.afterDeploy
 	return server, store
 }
 
@@ -610,7 +615,7 @@ func TestDeployStartsAndCommentsOnTheTicket(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := call(t, server, http.MethodPost, "/api/deploy",
-		`{"pipeline":"pruefen","author":"Marco","ticket":"`+ticket.Key+`"}`)
+		`{"pipeline":"pruefen","author":"Marco","tickets":["`+ticket.Key+`"]}`)
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
@@ -653,5 +658,407 @@ func TestDeployCannotBeStartedFromAForeignPage(t *testing.T) {
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status=%d - eine fremde Seite darf niemals deployen", recorder.Code)
+	}
+}
+
+func TestLogTimeRangeOverHTTP(t *testing.T) {
+	server, _ := newTestServer(t)
+	server.run = func(_ context.Context, _ ...string) ([]byte, error) {
+		return []byte(`2026-09-01T10:00:00Z {"level":"INFO","msg":"erste"}
+2026-09-01T10:01:00Z {"level":"ERROR","msg":"zweite"}
+2026-09-01T10:02:00Z {"level":"INFO","msg":"dritte"}
+`), nil
+	}
+	read := func(target string) (int, int) {
+		response := call(t, server, http.MethodGet, target, "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+		var payload struct {
+			Gefiltert int `json:"gefiltert"`
+			Gesamt    int `json:"gesamt"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		return payload.Gefiltert, payload.Gesamt
+	}
+	base := "/api/logs?namespace=homeflow&pod=api"
+
+	// RFC 3339, wie es jemand von Hand in die Adresszeile schreibt.
+	if matched, total := read(base + "&von=2026-09-01T10:00:30Z&bis=2026-09-01T10:01:30Z"); matched != 1 || total != 3 {
+		t.Fatalf("RFC3339: gefiltert=%d gesamt=%d", matched, total)
+	}
+	// Millisekunden, wie das Histogramm sie liefert.
+	from := time.Date(2026, 9, 1, 10, 0, 30, 0, time.UTC).UnixMilli()
+	to := time.Date(2026, 9, 1, 10, 1, 30, 0, time.UTC).UnixMilli()
+	if matched, _ := read(fmt.Sprintf("%s&von=%d&bis=%d", base, from, to)); matched != 1 {
+		t.Fatalf("Millisekunden: gefiltert=%d", matched)
+	}
+	// Unsinn in den Parametern darf nicht zum Fehler führen, sondern zu
+	// "kein Zeitraum" - sonst bricht ein alter Lesezeichen-Link die Seite.
+	if matched, _ := read(base + "&von=gestern&bis="); matched != 3 {
+		t.Fatalf("unlesbarer Zeitraum: gefiltert=%d", matched)
+	}
+}
+
+// waitForRun wartet auf das Ende des Durchlaufs. Danach steht fest, ob der
+// Rückruf gelaufen ist - auf einen Status zu warten, der nicht kommen soll,
+// würde jeden Negativtest um Sekunden verlängern.
+func waitForRun(t *testing.T, server *Server) deploy.Run {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if current := server.deploy.Current(); current != nil && !current.Running() {
+			// Der Rückruf läuft im selben Goroutine unmittelbar danach.
+			time.Sleep(20 * time.Millisecond)
+			return *current
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("Durchlauf endete nicht")
+	return deploy.Run{}
+}
+
+func ticketStatus(t *testing.T, store *tickets.Store, key string) tickets.Ticket {
+	t.Helper()
+	ticket, err := store.Get(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ticket
+}
+
+func TestSuccessfulDeployPullsItsTicketFromTestToDone(t *testing.T) {
+	server, store := deployServer(t, "kind-dev")
+	ticket, err := store.Create(tickets.NewTicket{Title: "Wartet auf Abnahme", Author: "Claude Code"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStatus(ticket.Key, tickets.StatusTest, "Claude Code"); err != nil {
+		t.Fatal(err)
+	}
+	response := call(t, server, http.MethodPost, "/api/deploy",
+		`{"pipeline":"monitoring","author":"Marco","tickets":["`+ticket.Key+`"],"trotzdem":true}`)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	waitForRun(t, server)
+	done := ticketStatus(t, store, ticket.Key)
+	if done.Status != tickets.StatusDone {
+		t.Fatalf("status=%q, erwartet %q", done.Status, tickets.StatusDone)
+	}
+	// Ein Status, der sich unerklärt ändert, wäre schlimmer als einer von Hand.
+	// Der Wechsel selbst wird von SetStatus protokolliert, die Begründung steht
+	// in dem Kommentar davor - geprüft wird deshalb über alle Kommentare.
+	var explanation string
+	for _, comment := range done.Comments {
+		if strings.Contains(comment.Text, "Test auf Fertig") {
+			explanation = comment.Text
+		}
+	}
+	if explanation == "" {
+		t.Fatalf("kein Kommentar erklärt den Wechsel: %#v", done.Comments)
+	}
+	if !strings.Contains(explanation, "Durchlauf #") || !strings.Contains(explanation, "erzwungen") {
+		t.Fatalf("Begründung unvollständig: %q", explanation)
+	}
+}
+
+func TestDeployOnlyClosesTicketsThatWaitForAcceptance(t *testing.T) {
+	// Wer nicht auf Test steht, wartet nicht auf Abnahme - und wird nicht
+	// abgenommen. Sonst schließt ein Deploy Arbeit, die noch läuft.
+	for _, start := range []string{tickets.StatusBacklog, tickets.StatusReady, tickets.StatusActive} {
+		t.Run(start, func(t *testing.T) {
+			server, store := deployServer(t, "kind-dev")
+			ticket, err := store.Create(tickets.NewTicket{Title: "Noch nicht so weit", Author: "Claude Code"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.SetStatus(ticket.Key, start, "Claude Code"); err != nil {
+				t.Fatal(err)
+			}
+			if response := call(t, server, http.MethodPost, "/api/deploy",
+				`{"pipeline":"monitoring","author":"Marco","tickets":["`+ticket.Key+`"],"trotzdem":true}`); response.Code != http.StatusAccepted {
+				t.Fatalf("status=%d", response.Code)
+			}
+			waitForRun(t, server)
+			after := ticketStatus(t, store, ticket.Key)
+			if after.Status != start {
+				t.Fatalf("status=%q, erwartet unverändert %q", after.Status, start)
+			}
+		})
+	}
+}
+
+func TestCheckOnlyPipelineAcceptsNothing(t *testing.T) {
+	// "Nur prüfen" ändert nichts am Cluster und darf deshalb auch nichts
+	// abnehmen.
+	server, store := deployServer(t, "kind-dev")
+	ticket, err := store.Create(tickets.NewTicket{Title: "Nur geprüft", Author: "Claude Code"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStatus(ticket.Key, tickets.StatusTest, "Claude Code"); err != nil {
+		t.Fatal(err)
+	}
+	if response := call(t, server, http.MethodPost, "/api/deploy",
+		`{"pipeline":"pruefen","author":"Marco","tickets":["`+ticket.Key+`"]}`); response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d", response.Code)
+	}
+	waitForRun(t, server)
+	after := ticketStatus(t, store, ticket.Key)
+	if after.Status != tickets.StatusTest {
+		t.Fatalf("status=%q, erwartet %q", after.Status, tickets.StatusTest)
+	}
+}
+
+func TestFailedDeployLeavesTheTicketAlone(t *testing.T) {
+	server, store := newTestServer(t)
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	server.deploy = deploy.NewRunner(dir,
+		write("make", "#!/bin/sh\necho 'Error: kaputt' >&2\nexit 2\n"),
+		write("kubectl", "#!/bin/sh\necho kind-dev\n"))
+	server.deploy.OnFinish = server.afterDeploy
+
+	ticket, err := store.Create(tickets.NewTicket{Title: "Deploy schlägt fehl", Author: "Claude Code"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStatus(ticket.Key, tickets.StatusTest, "Claude Code"); err != nil {
+		t.Fatal(err)
+	}
+	if response := call(t, server, http.MethodPost, "/api/deploy",
+		`{"pipeline":"monitoring","author":"Marco","tickets":["`+ticket.Key+`"],"trotzdem":true}`); response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d", response.Code)
+	}
+	waitForRun(t, server)
+	after := ticketStatus(t, store, ticket.Key)
+	if after.Status != tickets.StatusTest {
+		t.Fatalf("status=%q - ein fehlgeschlagener Deploy darf nichts abnehmen", after.Status)
+	}
+}
+
+func TestRestartRefusesWithoutDeployService(t *testing.T) {
+	server, _ := newTestServer(t)
+	if response := call(t, server, http.MethodPost, "/api/deploy/restart", ""); response.Code != http.StatusForbidden {
+		t.Fatalf("status=%d", response.Code)
+	}
+}
+
+func TestRestartCannotBeTriggeredFromAForeignPage(t *testing.T) {
+	// Ein Neustart aus einer fremden Seite heraus wäre ein billiger
+	// Dienstausfall auf Zuruf.
+	server, _ := deployServer(t, "kind-dev")
+	request := httptest.NewRequest(http.MethodPost, "/api/deploy/restart", nil)
+	request.Header.Set("Origin", "https://beliebige-seite.example")
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status=%d", recorder.Code)
+	}
+}
+
+func TestAcceptanceListSaysWhichTicketsADeployCanClose(t *testing.T) {
+	server, store := deployServer(t, "kind-dev")
+	create := func(title string, scope []string) tickets.Ticket {
+		t.Helper()
+		ticket, err := store.Create(tickets.NewTicket{Title: title, Author: "Claude Code", Scope: scope})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.SetStatus(ticket.Key, tickets.StatusTest, "Claude Code"); err != nil {
+			t.Fatal(err)
+		}
+		return ticket
+	}
+	backend := create("Am Backend", []string{"backend/internal/ocr/"})
+	cockpit := create("Am Cockpit", []string{"missioncontrol/internal/deploy/"})
+	document := create("Ein Dokument", []string{"docs/security/threat-model.md"})
+	noScope := create("Ohne Scope", nil)
+	// Ein Ticket, das nicht auf Test steht, gehört nicht in die Liste.
+	if _, err := store.Create(tickets.NewTicket{Title: "Noch im Backlog", Author: "Claude Code"}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := call(t, server, http.MethodGet, "/api/deploy", "")
+	var payload struct {
+		Abnahme []struct {
+			Key      string `json:"key"`
+			Pipeline string `json:"pipeline"`
+			Grund    string `json:"grund"`
+		} `json:"abnahme"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string]struct {
+		Key      string `json:"key"`
+		Pipeline string `json:"pipeline"`
+		Grund    string `json:"grund"`
+	}{}
+	for _, entry := range payload.Abnahme {
+		byKey[entry.Key] = entry
+	}
+	if len(payload.Abnahme) != 4 {
+		t.Fatalf("nur Tickets auf Test gehören hinein: %#v", payload.Abnahme)
+	}
+	if byKey[backend.Key].Pipeline != "homeflow" {
+		t.Fatalf("backend=%#v", byKey[backend.Key])
+	}
+	if byKey[cockpit.Key].Pipeline != "missioncontrol" {
+		t.Fatalf("cockpit=%#v", byKey[cockpit.Key])
+	}
+	// Der eigentliche Zweck: ein Dokument kann kein Deploy abnehmen, und das
+	// muss dranstehen statt stillschweigend zu fehlen.
+	if byKey[document.Key].Pipeline != "" || byKey[document.Key].Grund == "" {
+		t.Fatalf("dokument=%#v", byKey[document.Key])
+	}
+	if byKey[noScope.Key].Grund == "" {
+		t.Fatalf("ohne Scope=%#v", byKey[noScope.Key])
+	}
+}
+
+func TestBuildOnlyPipelineStillAcceptsItsTicket(t *testing.T) {
+	// Der Ablauf, der das Cockpit baut, braucht keinen Cluster - trotzdem
+	// trägt er etwas in ein laufendes System und muss abnehmen können. Der
+	// erste echte Durchlauf ist genau daran gescheitert.
+	server, store := deployServer(t, "kind-dev")
+	ticket, err := store.Create(tickets.NewTicket{Title: "Am Cockpit", Author: "Claude Code",
+		Scope: []string{"missioncontrol/internal/deploy/"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStatus(ticket.Key, tickets.StatusTest, "Claude Code"); err != nil {
+		t.Fatal(err)
+	}
+	if response := call(t, server, http.MethodPost, "/api/deploy",
+		`{"pipeline":"missioncontrol","author":"Marco","tickets":["`+ticket.Key+`"]}`); response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	waitForRun(t, server)
+	if after := ticketStatus(t, store, ticket.Key); after.Status != tickets.StatusDone {
+		t.Fatalf("status=%q, erwartet %q", after.Status, tickets.StatusDone)
+	}
+}
+
+func TestOneRunAcceptsSeveralTickets(t *testing.T) {
+	// Der Punkt der Änderung: drei Tickets in einem Durchlauf statt dreimal
+	// starten und dreimal einen Schlüssel abtippen.
+	server, store := deployServer(t, "kind-dev")
+	keys := []string{}
+	for _, title := range []string{"Erstes", "Zweites", "Drittes"} {
+		ticket, err := store.Create(tickets.NewTicket{Title: title, Author: "Claude Code",
+			Scope: []string{"missioncontrol/internal/deploy/"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.SetStatus(ticket.Key, tickets.StatusTest, "Claude Code"); err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, ticket.Key)
+	}
+	// Ein viertes bleibt ungenannt und muss unberührt bleiben.
+	untouched, err := store.Create(tickets.NewTicket{Title: "Nicht angekreuzt", Author: "Claude Code",
+		Scope: []string{"missioncontrol/internal/deploy/"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetStatus(untouched.Key, tickets.StatusTest, "Claude Code"); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"pipeline": "missioncontrol", "author": "Marco", "tickets": keys,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := call(t, server, http.MethodPost, "/api/deploy", string(body)); response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	waitForRun(t, server)
+	for _, key := range keys {
+		if after := ticketStatus(t, store, key); after.Status != tickets.StatusDone {
+			t.Fatalf("%s=%q, erwartet Fertig", key, after.Status)
+		}
+	}
+	if after := ticketStatus(t, store, untouched.Key); after.Status != tickets.StatusTest {
+		t.Fatalf("ungenanntes Ticket wurde mitgeschlossen: %q", after.Status)
+	}
+}
+
+func TestOneBadKeyRefusesTheWholeRun(t *testing.T) {
+	server, _ := deployServer(t, "kind-dev")
+	response := call(t, server, http.MethodPost, "/api/deploy",
+		`{"pipeline":"missioncontrol","author":"Marco","tickets":["MC-0001","unsinn"]}`)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), "unsinn") {
+		t.Fatalf("Fehlermeldung nennt den falschen Schlüssel nicht: %s", response.Body.String())
+	}
+}
+
+func TestDeployRecordsWhichReleaseShippedTheTicket(t *testing.T) {
+	// Der Kern der Korrektur: "gefunden in" wird beim Anlegen gestempelt,
+	// "geliefert in" erst durch einen Deploy - sonst behauptet jedes offene
+	// Ticket, zu einer längst fertigen Release zu gehören.
+	server, store := deployServer(t, "kind-dev")
+	ticket, err := store.Create(tickets.NewTicket{Title: "Wird ausgeliefert", Author: "Claude Code",
+		Scope: []string{"missioncontrol/internal/deploy/"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ticket.Delivered != "" {
+		t.Fatalf("frisches Ticket behauptet eine Auslieferung: %q", ticket.Delivered)
+	}
+	if _, err := store.SetStatus(ticket.Key, tickets.StatusTest, "Claude Code"); err != nil {
+		t.Fatal(err)
+	}
+	if response := call(t, server, http.MethodPost, "/api/deploy",
+		`{"pipeline":"missioncontrol","author":"Marco","tickets":["`+ticket.Key+`"]}`); response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d", response.Code)
+	}
+	waitForRun(t, server)
+	after := ticketStatus(t, store, ticket.Key)
+	if after.Status != tickets.StatusDone {
+		t.Fatalf("status=%q", after.Status)
+	}
+	// Die Version des Cockpits, nicht die von HomeFlow.
+	if after.Delivered != "test" {
+		t.Fatalf("geliefert=%q, erwartet die Version des Ablaufs", after.Delivered)
+	}
+	var explained bool
+	for _, comment := range after.Comments {
+		if strings.Contains(comment.Text, "Ausgeliefert in test") {
+			explained = true
+		}
+	}
+	if !explained {
+		t.Fatalf("Auslieferung nicht im Kommentar erklärt: %#v", after.Comments)
+	}
+}
+
+func TestOpenTicketsNeverClaimADelivery(t *testing.T) {
+	_, store := deployServer(t, "kind-dev")
+	ticket, err := store.Create(tickets.NewTicket{Title: "Bleibt offen", Author: "Claude Code"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{tickets.StatusReady, tickets.StatusActive, tickets.StatusTest} {
+		if _, err := store.SetStatus(ticket.Key, status, "Claude Code"); err != nil {
+			t.Fatal(err)
+		}
+		if after := ticketStatus(t, store, ticket.Key); after.Delivered != "" {
+			t.Fatalf("Status %q setzte eine Auslieferung: %q", status, after.Delivered)
+		}
 	}
 }

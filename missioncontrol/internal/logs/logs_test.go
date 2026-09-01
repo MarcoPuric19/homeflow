@@ -192,3 +192,86 @@ func TestPostgresTimestampIsParsedWhenKubectlPrefixIsMissing(t *testing.T) {
 		t.Fatalf("zeit=%v", entry.Time)
 	}
 }
+
+func at(hour, minute, second int) time.Time {
+	return time.Date(2026, 9, 1, hour, minute, second, 0, time.UTC)
+}
+
+func timedLines() []string {
+	// Vier Zeilen über zwei Minuten, damit ein Zeitraum überhaupt etwas
+	// auszuwählen hat.
+	return []string{
+		`2026-09-01T10:00:00Z {"level":"INFO","msg":"erste"}`,
+		`2026-09-01T10:00:30Z {"level":"WARN","msg":"zweite"}`,
+		`2026-09-01T10:01:00Z {"level":"ERROR","msg":"dritte"}`,
+		`2026-09-01T10:02:00Z {"level":"INFO","msg":"vierte"}`,
+	}
+}
+
+func messages(result Result) []string {
+	out := make([]string, 0, len(result.Entries))
+	for _, entry := range result.Entries {
+		out = append(out, entry.Message)
+	}
+	return out
+}
+
+func TestTimeRangeNarrowsTheView(t *testing.T) {
+	result := Analyse(timedLines(), Query{From: at(10, 0, 30), To: at(10, 2, 0)}, 10)
+	got := messages(result)
+	if len(got) != 2 || got[0] != "zweite" || got[1] != "dritte" {
+		t.Fatalf("eintraege=%v", got)
+	}
+	// Das obere Ende ist ausschließend: wer bis 10:02:00 zieht, will den
+	// Eintrag von 10:02:00 nicht mehr dabeihaben.
+	for _, entry := range result.Entries {
+		if entry.Message == "vierte" {
+			t.Fatal("obere Grenze ist einschließend statt ausschließend")
+		}
+	}
+}
+
+func TestTimeRangeKeepsTheCountersHonest(t *testing.T) {
+	result := Analyse(timedLines(), Query{From: at(10, 0, 0), To: at(10, 0, 31)}, 10)
+	if result.Matched != 2 {
+		t.Fatalf("gefiltert=%d", result.Matched)
+	}
+	// Der Fehler von 10:01 liegt außerhalb - der Zähler muss ihn trotzdem
+	// zeigen, sonst versteckt ein Zeitraum, dass es Fehler gibt.
+	if result.Counts[LevelError] != 1 || result.Total != 4 {
+		t.Fatalf("zaehler=%v gesamt=%d", result.Counts, result.Total)
+	}
+}
+
+func TestOpenEndedRanges(t *testing.T) {
+	if result := Analyse(timedLines(), Query{From: at(10, 1, 0)}, 10); result.Matched != 2 {
+		t.Fatalf("nur von=%d", result.Matched)
+	}
+	if result := Analyse(timedLines(), Query{To: at(10, 1, 0)}, 10); result.Matched != 2 {
+		t.Fatalf("nur bis=%d", result.Matched)
+	}
+	if result := Analyse(timedLines(), Query{}, 10); result.Matched != 4 {
+		t.Fatalf("ohne Zeitraum=%d", result.Matched)
+	}
+}
+
+func TestTimeRangeCombinesWithTheOtherFilters(t *testing.T) {
+	result := Analyse(timedLines(), Query{From: at(10, 0, 0), To: at(10, 2, 0), Levels: []string{LevelError}}, 10)
+	if result.Matched != 1 || result.Entries[0].Message != "dritte" {
+		t.Fatalf("eintraege=%v", messages(result))
+	}
+}
+
+func TestLinesWithoutTimestampDropOutOfATimeRange(t *testing.T) {
+	lines := append(timedLines(), "eine Zeile ganz ohne Zeitstempel")
+	// Ohne Zeitraum ist sie dabei.
+	if result := Analyse(lines, Query{}, 10); result.Matched != 5 {
+		t.Fatalf("ohne Zeitraum=%d", result.Matched)
+	}
+	// Mit Zeitraum nicht - sie lässt sich nicht auf der Achse verorten. Der
+	// Gesamtzähler kennt sie weiterhin.
+	result := Analyse(lines, Query{From: at(10, 0, 0), To: at(10, 3, 0)}, 10)
+	if result.Matched != 4 || result.Total != 5 {
+		t.Fatalf("gefiltert=%d gesamt=%d", result.Matched, result.Total)
+	}
+}

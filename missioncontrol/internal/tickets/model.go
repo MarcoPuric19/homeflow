@@ -118,9 +118,14 @@ type Ticket struct {
 	// Owner is the assignee, Reporter whoever raised it.
 	Owner    string `json:"owner"`
 	Reporter string `json:"reporter"`
-	// Version is the release of *this ticket's project* - HomeFlow's VERSION for
-	// HF tickets, Mission Control's own for MC tickets.
+	// Version is where this was found: the release the project was on when the
+	// ticket was written. Known at creation time.
+	//
+	// Delivered is which release actually shipped it, and stays empty until a
+	// deployment says otherwise. Merging the two made every untouched ticket
+	// claim membership in a release that had long since shipped.
 	Version   string `json:"version"`
+	Delivered string `json:"delivered,omitempty"`
 	Epic      string `json:"epic,omitempty"`
 	Component string `json:"component,omitempty"`
 	// Scope names the files a ticket works on. It is what Austausch.md's claim

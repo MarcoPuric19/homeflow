@@ -103,7 +103,26 @@ func buildQuery(query url.Values) logs.Query {
 			built.Fields[name] = value
 		}
 	}
+	built.From = parseInstant(query.Get("von"))
+	built.To = parseInstant(query.Get("bis"))
 	return built
+}
+
+// parseInstant accepts RFC 3339 or milliseconds since epoch. The histogram
+// hands back milliseconds because that is what a browser has; a person typing
+// a range into the address bar has RFC 3339.
+func parseInstant(value string) time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}
+	}
+	if instant, err := time.Parse(time.RFC3339, value); err == nil {
+		return instant
+	}
+	if millis, err := strconv.ParseInt(value, 10, 64); err == nil && millis > 0 {
+		return time.UnixMilli(millis)
+	}
+	return time.Time{}
 }
 
 func splitLines(value string) []string {

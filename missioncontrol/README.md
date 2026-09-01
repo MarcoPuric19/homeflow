@@ -1,4 +1,4 @@
-# Mission Control 0.7.0
+# Mission Control 0.14.0
 
 Lokales Cockpit für HomeFlow: zeigt, welche Pods wovon abhängen, und trägt den
 Austausch zwischen den Assistenten als Tickets.
@@ -113,14 +113,21 @@ ERROR/WARN/INFO/DEBUG. Ein Filter wirkt dadurch über alle fünf Formate.
 - **Aufklappbare Zeilen**: Feldtabelle plus die Rohzeile. Jedes Feld lässt sich
   von dort aus als Filter setzen.
 - **Volltextsuche** über Nachricht und Rohzeile.
+- **Zeitraum durch Ziehen im Histogramm.** Die schnellste Art zu sagen „zeig
+  mir, was um diese Zeit passiert ist". Die Auswahl geht über die Balkenzeiten,
+  die der Server geliefert hat, bedeutet also genau das, was die Balken zeigen.
+  Der gewählte Zeitraum steht als Chip darüber und lässt sich mit einem Klick
+  aufheben; ein Klick ohne Ziehen wählt nichts aus, damit ein Fehlklick nicht
+  den Blick aufs Ganze löscht. Das obere Ende schließt den getroffenen Balken
+  mit ein, die Grenze selbst ist ausschließend.
 - Fehler und Warnungen haben farbigen Balken, farbiges Level und eingefärbten
   Text — sie stehen heraus, ohne dass man sie sucht.
 
 Ausgewertet wird auf dem Server: 2000 Zeilen sind in Go billig und in
 JavaScript teuer, und Histogramm und Zähler müssen zueinander passen.
 
-`GET /api/logs` nimmt `level=ERROR,WARN`, `q=text` und beliebig viele
-`feld=name:wert`. Pod-, Container- und Namespace-Namen werden weiterhin gegen
+`GET /api/logs` nimmt `level=ERROR,WARN`, `q=text`, beliebig viele
+`feld=name:wert` sowie `von=` und `bis=` (RFC 3339 oder Millisekunden). Pod-, Container- und Namespace-Namen werden weiterhin gegen
 das Kubernetes-Namensschema geprüft, bevor sie kubectl erreichen.
 
 ## Tickets
@@ -133,8 +140,15 @@ Das Vokabular ist an Jira angelehnt, weil es das ist, das wir alle schon kennen:
 | Projekt | `HF` (HomeFlow), `MC` (Mission Control) — der Schlüssel trägt es: `HF-0042`, `MC-0003` |
 | Typ | Epic, Task, Bug, Beobachtung, Protokoll |
 | Priorität | Hoch, Mittel, Niedrig |
-| Version | die Release des **jeweiligen Projekts**, nicht eine gemeinsame |
+| Version | **gefunden in**: die Release, auf der das Projekt beim Anlegen stand |
+| Geliefert | **ausgeliefert in**: trägt erst ein erfolgreicher Deploy ein |
 | Scope | Dateipfade oder Muster — siehe „Repo" |
+
+Die beiden Versionsfelder sind bewusst getrennt. Sie zu einem zu verschmelzen
+hat dazu geführt, dass 41 offene Tickets behaupteten, zu einer längst
+ausgelieferten Release zu gehören — ein Ticket, das niemand angefasst hat, kann
+nicht Teil einer fertigen Version sein. Was ausgeliefert wurde, weiß nur der
+Deploy, und der trägt es ein.
 
 `Protokoll` ist der Typ, den die übernommene Historie aus `Austausch.md`
 bekommen hat: abgeschlossene Arbeit, die aufbewahrt wird. Solche Tickets sind
@@ -212,6 +226,7 @@ Repos aus und zeigt die Ausgabe live mit.
 | --- | --- | --- |
 | HomeFlow deployen | `ci` → `docker-build` → `kind-load` → `deploy` | ersetzt die laufende Anwendung |
 | Monitoring deployen | `monitoring-manifests` → `monitoring-deploy` | wendet den Monitoring-Stack an |
+| Mission Control bauen | `mission-control-ci` | baut das Cockpit selbst; der laufende Dienst bleibt unberührt bis zum Neustart |
 | Nur prüfen | `ci` | ändert nichts |
 
 ### Ein Ablauf startet nur, wenn er etwas ändert
@@ -224,9 +239,15 @@ prüft Mission Control **vor** dem Start, was sich überhaupt ändern würde:
 | --- | --- |
 | Version | `VERSION` aus der Makefile gegen das Image des laufenden Pods |
 | Manifeste | `kubectl diff -k …` — kubectl selbst beantwortet die Frage |
+| Cockpit | Quelltext gegen das gebaute Binary, **und** das Binary gegen den laufenden Dienst |
 
-Findet sie nichts, ist der Knopf gesperrt und sagt „nichts zu tun", mit der
-Begründung darunter. Der Startversuch über die API antwortet mit **412**.
+Findet sie nichts, ist der Knopf **für die Abläufe gesperrt, die ein laufendes
+System verändern** — also für die beiden Cluster-Abläufe. Der Startversuch über
+die API antwortet dort mit **412**.
+
+Bauen und Prüfen sind davon ausgenommen: ein Lauf, der nur baut, kostet zwanzig
+Sekunden und richtet keinen Schaden an. Ihn zu sperren hieße, jemanden
+auszusperren, der genau das will.
 
 Vom Diff werden nur die **Namen** der betroffenen Objekte angezeigt, nie der
 Inhalt: der kann Konfigurationswerte enthalten, und das Cockpit hat nichts
@@ -250,11 +271,38 @@ erzwungen protokolliert und steht so auch im Ticketkommentar.
 - **Nichts Fremdes.** Die Schritte sind make-Ziele, weil die Makefile die
   Schutzmechanismen schon trägt (`kind-load` verweigert einen fremden Kontext,
   `deploy` ein fehlendes Secret). Zwei Wahrheiten wären schlimmer als keine.
-- **Kein Selbst-Deploy.** Mission Control aktualisiert sich nicht selbst; das
-  würde den Prozess mitten in der Anfrage beenden.
+- **Kein Selbst-Deploy in einem Zug.** Der Ablauf „Mission Control bauen" legt
+  nur ein neues Binary ab; übernommen wird es durch einen ausdrücklichen
+  Neustart. Der antwortet zuerst und beendet sich dann - andersherum sähe die
+  Oberfläche einen Verbindungsabbruch und könnte Erfolg nicht von Absturz
+  unterscheiden.
 
 Abschaltbar mit `--deploy=false`. Wer einen Ticketschlüssel angibt, bekommt den
 Durchlauf als Kommentar an diesem Ticket protokolliert.
+
+### Der Deploy schließt sein Ticket
+
+Ein erfolgreicher Deploy zieht das angegebene Ticket von **Test** auf
+**Fertig** — der Deploy ist die Abnahme, auf die diese Spalte wartet.
+
+Bewusst eng gefasst, weil ein Board, das sich selbst schließt, weniger wert ist
+als eines, das niemand pflegt:
+
+- **Nur das Ticket, das beim Start genannt wurde.** Nicht alle auf Test: ein
+  HomeFlow-Deploy sagt nichts über ein Ticket im Threat Model aus.
+- **Nur aus der Spalte Test.** Wer in Backlog, Ready oder In Bearbeitung steht,
+  wartet nicht auf Abnahme und wird auch nicht abgenommen.
+- **Nur nach einem erfolgreichen Durchlauf.**
+- **Nie nach „Nur prüfen".** Ein Lauf, der nichts ändert, nimmt nichts ab.
+- **Immer mit Kommentar**, der Durchlauf und Grund nennt — und vermerkt, wenn
+  der Lauf erzwungen war.
+
+Weil längst nicht jede Arbeit in einem Cluster landet, zeigt die Ansicht
+außerdem **„Wartet auf Abnahme"**: alle Tickets in der Spalte Test, und je
+Ticket, ob ein Ablauf ihre Pfade überhaupt ausrollt. Ein Dokument, ein Skript
+oder unverdrahteter Code bekommt dort ausdrücklich „kein Ablauf deckt diese
+Pfade ab" statt stillschweigend zu fehlen — sonst wartet jemand auf einen
+Knopf, der nie etwas tun wird.
 
 ### Herkunftsprüfung
 
@@ -354,6 +402,7 @@ Status: `Backlog`, `Ready`, `In Bearbeitung`, `Test`, `Fertig`.
 | `POST /api/deploy` | Durchlauf starten (`pipeline`, `author`, optional `ticket`, `trotzdem`) |
 | `GET /api/deploy/changes` | was sich je Ablauf ändern würde |
 | `POST /api/deploy/cancel` | laufenden Durchlauf abbrechen |
+| `POST /api/deploy/restart` | Dienst neu starten, um ein neues Binary zu übernehmen |
 | `GET /api/versions` | Versionen aller Plattformen |
 | `GET /api/board` | Spaltenreihenfolge und laufende Version |
 | `GET /api/logs?namespace=&pod=[&container=&lines=&level=&q=&feld=]` | ausgewertetes Log eines Pods |

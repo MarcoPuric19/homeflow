@@ -33,13 +33,16 @@ type Run struct {
 	Pipeline  string    `json:"pipeline"`
 	Title     string    `json:"titel"`
 	StartedBy string    `json:"gestartetVon"`
-	Ticket    string    `json:"ticket,omitempty"`
+	Tickets   []string  `json:"tickets,omitempty"`
 	Started   time.Time `json:"start"`
 	Ended     time.Time `json:"ende,omitempty"`
 	Status    string    `json:"status"` // läuft | erfolgreich | fehlgeschlagen | abgebrochen
 	Forced    bool      `json:"erzwungen,omitempty"`
-	Step      string    `json:"schritt,omitempty"`
-	Lines     []LogLine `json:"zeilen,omitempty"`
+	// Version is the release this run actually rolled out. It is the answer a
+	// ticket needs for "shipped in", and only the run knows it.
+	Version string    `json:"version,omitempty"`
+	Step    string    `json:"schritt,omitempty"`
+	Lines   []LogLine `json:"zeilen,omitempty"`
 }
 
 func (r Run) Running() bool { return r.Status == "läuft" }
@@ -54,6 +57,14 @@ type Runner struct {
 	current *Run
 	history []Run
 	cancel  context.CancelFunc
+	// OnFinish is called once per run, after it ended and after the lock is
+	// released - a callback that reaches back into the runner would otherwise
+	// deadlock.
+	OnFinish func(Run)
+	// ProcessStarted is when this cockpit process began. Comparing it with the
+	// binary on disk answers the question the source timestamp cannot: is the
+	// service actually running what was built?
+	ProcessStarted time.Time
 }
 
 func NewRunner(root, makeBinary, kubectlBinary string) *Runner {
@@ -73,7 +84,7 @@ var (
 // source that changed without a version bump produces an identical tag and an
 // identical manifest, and the check cannot see it. Forcing is possible, but it
 // is a deliberate act and lands in the log.
-func (r *Runner) Start(pipelineName, startedBy, ticket string, force bool) (Run, error) {
+func (r *Runner) Start(pipelineName, startedBy string, ticketKeys []string, force bool, version string) (Run, error) {
 	pipeline, ok := Find(pipelineName)
 	if !ok {
 		return Run{}, ErrUnknown
@@ -106,7 +117,8 @@ func (r *Runner) Start(pipelineName, startedBy, ticket string, force bool) (Run,
 	ctx, cancel := context.WithTimeout(context.Background(), pipeline.Timeout)
 	r.mu.Lock()
 	run := &Run{ID: r.next, Pipeline: pipeline.Name, Title: pipeline.Title, StartedBy: startedBy,
-		Ticket: ticket, Started: time.Now(), Status: "läuft", Forced: force, Lines: []LogLine{}}
+		Tickets: ticketKeys, Started: time.Now(), Status: "läuft", Forced: force,
+		Version: version, Lines: []LogLine{}}
 	r.next++
 	r.current = run
 	r.cancel = cancel
@@ -194,7 +206,6 @@ func (r *Runner) setStep(run *Run, step string) {
 
 func (r *Runner) finish(run *Run, status string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	run.Status = status
 	run.Ended = time.Now()
 	run.Step = ""
@@ -204,6 +215,12 @@ func (r *Runner) finish(run *Run, status string) {
 	r.history = append([]Run{short}, r.history...)
 	if len(r.history) > 20 {
 		r.history = r.history[:20]
+	}
+	callback := r.OnFinish
+	r.mu.Unlock()
+
+	if callback != nil {
+		callback(short)
 	}
 }
 

@@ -67,8 +67,12 @@ func New(logger *slog.Logger, store *tickets.Store, run cluster.Runner, git repo
 	mux.HandleFunc("POST /api/deploy", s.deployStart)
 	mux.HandleFunc("GET /api/deploy/changes", s.deployChanges)
 	mux.HandleFunc("POST /api/deploy/cancel", s.deployCancel)
+	mux.HandleFunc("POST /api/deploy/restart", s.deployRestart)
 	if config.WebRoot != "" {
 		mux.Handle("/", http.FileServer(http.Dir(config.WebRoot)))
+	}
+	if deployer != nil {
+		deployer.OnFinish = s.afterDeploy
 	}
 	s.handler = headers(sameOriginOnly(mux))
 	return s

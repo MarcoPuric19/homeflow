@@ -69,11 +69,11 @@ func TestPipelinesAreAFixedAllowlist(t *testing.T) {
 
 func TestRunThroughAllSteps(t *testing.T) {
 	runner := fakeProject(t, "kind-dev", okMake)
-	if _, err := runner.Start("monitoring", "Marco", "MC-0001", true); err != nil {
+	if _, err := runner.Start("monitoring", "Marco", []string{"MC-0001"}, true, "1.0.0"); err != nil {
 		t.Fatal(err)
 	}
 	run := waitFor(t, runner, "erfolgreich")
-	if run.Ticket != "MC-0001" || run.StartedBy != "Marco" {
+	if len(run.Tickets) != 1 || run.Tickets[0] != "MC-0001" || run.StartedBy != "Marco" {
 		t.Fatalf("run=%#v", run)
 	}
 	joined := ""
@@ -98,7 +98,7 @@ func TestAFailingStepStopsTheRun(t *testing.T) {
 	// Der zweite Schritt scheitert; der dritte darf nicht mehr laufen.
 	script := "#!/bin/sh\ncase \"$1\" in\n  monitoring-manifests) echo ok; exit 0;;\n  *) echo 'Error: kaputt' >&2; exit 2;;\nesac\n"
 	runner := fakeProject(t, "kind-dev", script)
-	if _, err := runner.Start("monitoring", "Marco", "", true); err != nil {
+	if _, err := runner.Start("monitoring", "Marco", nil, true, "1.0.0"); err != nil {
 		t.Fatal(err)
 	}
 	run := waitFor(t, runner, "fehlgeschlagen")
@@ -117,7 +117,7 @@ func TestRefusesAForeignCluster(t *testing.T) {
 	// Die wichtigste Weigerung: niemals in etwas deployen, das nicht der lokale
 	// kind-Cluster ist.
 	runner := fakeProject(t, "produktion-eu-west", okMake)
-	_, err := runner.Start("homeflow", "Marco", "", true)
+	_, err := runner.Start("homeflow", "Marco", nil, true, "1.0.0")
 	if !errors.Is(err, ErrWrongCluster) {
 		t.Fatalf("err=%v", err)
 	}
@@ -132,7 +132,7 @@ func TestRefusesAForeignCluster(t *testing.T) {
 func TestPipelineWithoutClusterRunsAnywhere(t *testing.T) {
 	// "Nur prüfen" ändert nichts und darf deshalb auch bei fremdem Kontext laufen.
 	runner := fakeProject(t, "irgendein-anderer", okMake)
-	if _, err := runner.Start("pruefen", "Codex", "", false); err != nil {
+	if _, err := runner.Start("pruefen", "Codex", nil, false, "1.0.0"); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	waitFor(t, runner, "erfolgreich")
@@ -140,26 +140,26 @@ func TestPipelineWithoutClusterRunsAnywhere(t *testing.T) {
 
 func TestOnlyOneRunAtATime(t *testing.T) {
 	runner := fakeProject(t, "kind-dev", "#!/bin/sh\nsleep 2\n")
-	if _, err := runner.Start("monitoring", "Marco", "", true); err != nil {
+	if _, err := runner.Start("monitoring", "Marco", nil, true, "1.0.0"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runner.Start("monitoring", "Codex", "", true); !errors.Is(err, ErrBusy) {
+	if _, err := runner.Start("monitoring", "Codex", nil, true, "1.0.0"); !errors.Is(err, ErrBusy) {
 		t.Fatalf("zweiter Start: err=%v", err)
 	}
 	runner.Cancel()
 	waitFor(t, runner, "abgebrochen")
 	// Nach dem Abbruch ist der Platz wieder frei.
-	if _, err := runner.Start("monitoring", "Marco", "", true); err != nil {
+	if _, err := runner.Start("monitoring", "Marco", nil, true, "1.0.0"); err != nil {
 		t.Fatalf("nach Abbruch: err=%v", err)
 	}
 }
 
 func TestUnknownPipelineAndMissingAuthorAreRefused(t *testing.T) {
 	runner := fakeProject(t, "kind-dev", okMake)
-	if _, err := runner.Start("gibtsnicht", "Marco", "", false); !errors.Is(err, ErrUnknown) {
+	if _, err := runner.Start("gibtsnicht", "Marco", nil, false, "1.0.0"); !errors.Is(err, ErrUnknown) {
 		t.Fatalf("err=%v", err)
 	}
-	if _, err := runner.Start("pruefen", "  ", "", false); err == nil {
+	if _, err := runner.Start("pruefen", "  ", nil, false, "1.0.0"); err == nil {
 		t.Fatal("Durchlauf ohne Urheber wurde angenommen")
 	}
 }
@@ -257,7 +257,7 @@ func TestInspectReportsNothingToDo(t *testing.T) {
 
 func TestStartRefusesWhenNothingWouldChange(t *testing.T) {
 	runner := changeProject(t, "0.15.0", "localhost:5000/homeflow/api:0.15.0", "", 0)
-	_, err := runner.Start("homeflow", "Marco", "", false)
+	_, err := runner.Start("homeflow", "Marco", nil, false, "1.0.0")
 	if !errors.Is(err, ErrNoChanges) {
 		t.Fatalf("err=%v", err)
 	}
@@ -266,7 +266,7 @@ func TestStartRefusesWhenNothingWouldChange(t *testing.T) {
 	}
 	// Erzwingen bleibt möglich - Quelltextänderungen ohne Versionssprung sieht
 	// die Prüfung nicht.
-	run, err := runner.Start("homeflow", "Marco", "", true)
+	run, err := runner.Start("homeflow", "Marco", nil, true, "1.0.0")
 	if err != nil {
 		t.Fatalf("erzwungen: err=%v", err)
 	}
@@ -278,7 +278,7 @@ func TestStartRefusesWhenNothingWouldChange(t *testing.T) {
 
 func TestStartProceedsWhenSomethingWouldChange(t *testing.T) {
 	runner := changeProject(t, "0.15.0", "localhost:5000/homeflow/api:0.5.0", sampleDiff, 1)
-	if _, err := runner.Start("homeflow", "Marco", "", false); err != nil {
+	if _, err := runner.Start("homeflow", "Marco", nil, false, "1.0.0"); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	waitFor(t, runner, "erfolgreich")
@@ -290,8 +290,129 @@ func TestCheckOnlyPipelineNeverNeedsChanges(t *testing.T) {
 	if !assessment.HasChanges() {
 		t.Fatalf("Prüflauf wurde gesperrt: %#v", assessment)
 	}
-	if _, err := runner.Start("pruefen", "Marco", "", false); err != nil {
+	if _, err := runner.Start("pruefen", "Marco", nil, false, "1.0.0"); err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	waitFor(t, runner, "erfolgreich")
+}
+
+func TestMissionControlPipelineNeedsNoCluster(t *testing.T) {
+	pipeline, ok := Find("missioncontrol")
+	if !ok {
+		t.Fatal("Pipeline fehlt")
+	}
+	// Das Cockpit zu bauen hat mit dem Cluster nichts zu tun - sonst wäre es
+	// bei fremdem kubectl-Kontext gesperrt, obwohl es nichts anfasst.
+	if pipeline.NeedsCluster {
+		t.Fatal("verlangt einen Cluster")
+	}
+	runner := changeProject(t, "0.15.0", "", "", 0)
+	if _, err := runner.Start("missioncontrol", "Marco", nil, false, "1.0.0"); err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	waitFor(t, runner, "erfolgreich")
+}
+
+func TestBinaryOlderThanSourceCountsAsAChange(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "missioncontrol", "internal", "httpd")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(dir, "missioncontrol", "bin", "missioncontrol")
+	if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(dir, "/bin/true", "/bin/true")
+
+	// Ohne Binary gibt es immer etwas zu tun.
+	assessment := runner.Inspect(context.Background(), "missioncontrol")
+	if !assessment.HasChanges() || assessment.Changes[0].Detail != "noch nicht gebaut" {
+		t.Fatalf("ohne Binary: %#v", assessment)
+	}
+
+	// Binary neuer als der Quelltext: nichts zu tun.
+	if err := os.WriteFile(filepath.Join(source, "server.go"), []byte("package httpd"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(time.Minute)
+	if err := os.Chtimes(binary, later, later); err != nil {
+		t.Fatal(err)
+	}
+	if assessment := runner.Inspect(context.Background(), "missioncontrol"); assessment.HasChanges() {
+		t.Fatalf("Binary ist neuer, trotzdem Änderung gemeldet: %#v", assessment)
+	}
+
+	// Quelltext angefasst: wieder etwas zu tun, und die Datei wird benannt.
+	newer := later.Add(time.Minute)
+	if err := os.Chtimes(filepath.Join(source, "server.go"), newer, newer); err != nil {
+		t.Fatal(err)
+	}
+	assessment = runner.Inspect(context.Background(), "missioncontrol")
+	if !assessment.HasChanges() {
+		t.Fatal("geänderter Quelltext wurde nicht erkannt")
+	}
+	if !strings.Contains(assessment.Changes[0].Detail, "server.go") {
+		t.Fatalf("Datei nicht benannt: %#v", assessment.Changes)
+	}
+}
+
+func TestTheBinaryItselfIsNotSource(t *testing.T) {
+	// Das Binary liegt unter missioncontrol/bin und darf sich nicht selbst als
+	// geänderten Quelltext melden - sonst gäbe es nach jedem Bauen sofort
+	// wieder etwas zu tun.
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "missioncontrol", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(binDir, "missioncontrol")
+	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "hilfsdatei.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(filepath.Join(binDir, "hilfsdatei.go"), later, later); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(dir, "/bin/true", "/bin/true")
+	if assessment := runner.Inspect(context.Background(), "missioncontrol"); assessment.HasChanges() {
+		t.Fatalf("Dateien unter bin/ zählen als Quelltext: %#v", assessment.Changes)
+	}
+}
+
+func TestServiceRunningAnOlderBinaryIsAChange(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "missioncontrol", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(binDir, "missioncontrol")
+	if err := os.WriteFile(binary, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunner(dir, "/bin/true", "/bin/true")
+
+	// Prozess später gestartet als das Binary: der Dienst läuft auf dem, was
+	// gebaut wurde - nichts zu tun.
+	runner.ProcessStarted = time.Now().Add(time.Minute)
+	if assessment := runner.Inspect(context.Background(), "missioncontrol"); assessment.HasChanges() {
+		t.Fatalf("läuft aktuell, trotzdem Änderung: %#v", assessment.Changes)
+	}
+
+	// Binary neuer als der Prozess: gebaut, aber nicht übernommen. Genau der
+	// Zustand, in dem das Cockpit vorher "nichts zu tun" meldete.
+	runner.ProcessStarted = time.Now().Add(-time.Hour)
+	assessment := runner.Inspect(context.Background(), "missioncontrol")
+	if !assessment.HasChanges() {
+		t.Fatal("altes Binary im Dienst wurde nicht erkannt")
+	}
+	if assessment.Changes[0].Kind != "Neustart" {
+		t.Fatalf("changes=%#v", assessment.Changes)
+	}
 }

@@ -42,9 +42,29 @@ type Query struct {
 	Levels []string          // empty means every level
 	Text   string            // free text over message and raw line
 	Fields map[string]string // field:value, all must match
+	// From and To narrow the view to a time range, usually pulled open in the
+	// histogram. Zero means unbounded on that side.
+	From time.Time
+	To   time.Time
 }
 
 func (q Query) matches(entry Entry) bool {
+	if !q.From.IsZero() || !q.To.IsZero() {
+		// A line without a usable timestamp cannot be placed on the axis. It is
+		// dropped from a time-narrowed view rather than guessed into it; the
+		// counters still cover every line, so nothing disappears silently.
+		if entry.Time.IsZero() {
+			return false
+		}
+		if !q.From.IsZero() && entry.Time.Before(q.From) {
+			return false
+		}
+		// To is exclusive: dragging up to a bucket boundary should not pull in
+		// the first entry of the next bucket.
+		if !q.To.IsZero() && !entry.Time.Before(q.To) {
+			return false
+		}
+	}
 	if len(q.Levels) > 0 {
 		found := false
 		for _, level := range q.Levels {

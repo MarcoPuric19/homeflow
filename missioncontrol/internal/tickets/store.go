@@ -267,6 +267,13 @@ func (s *Store) SetVersion(key, version, author string) (Ticket, error) {
 		func(t *Ticket) string { return t.Version }, func(t *Ticket, v string) { t.Version = v })
 }
 
+// SetDelivered records which release actually shipped a ticket. Only a
+// deployment has that answer, which is why nothing sets it at creation time.
+func (s *Store) SetDelivered(key, version, author string) (Ticket, error) {
+	return s.setField(key, author, "Geliefert in", version, nil,
+		func(t *Ticket) string { return t.Delivered }, func(t *Ticket, v string) { t.Delivered = v })
+}
+
 func (s *Store) SetPriority(key, priority, author string) (Ticket, error) {
 	return s.setField(key, author, "Priorität", priority, ValidPriority,
 		func(t *Ticket) string { return t.Priority }, func(t *Ticket, v string) { t.Priority = v })

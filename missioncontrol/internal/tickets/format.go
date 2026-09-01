@@ -24,6 +24,7 @@ func render(ticket Ticket) string {
 		{"zustaendig", ticket.Owner},
 		{"melder", ticket.Reporter},
 		{"version", ticket.Version},
+		{"geliefert", ticket.Delivered},
 		{"epic", ticket.Epic},
 		{"komponente", ticket.Component},
 		{"scope", strings.Join(ticket.Scope, ", ")},
@@ -92,6 +93,8 @@ func parse(key, content string) (Ticket, error) {
 				ticket.Reporter = value
 			case "version":
 				ticket.Version = value
+			case "geliefert":
+				ticket.Delivered = value
 			case "epic":
 				if ValidKey(value) {
 					ticket.Epic = value

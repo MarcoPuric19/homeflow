@@ -26,7 +26,7 @@ import (
 // Mission Control versions itself. It is deliberately not tied to HomeFlow's
 // VERSION: the cockpit is a separate product with its own lifecycle, and its
 // tickets carry this version, not HomeFlow's.
-const version = "0.7.0"
+const version = "0.14.0"
 
 func main() {
 	if err := run(); err != nil {
@@ -67,6 +67,7 @@ func run() error {
 	var deployer *deploy.Runner
 	if *enableDeploy {
 		deployer = deploy.NewRunner(defaultRoot, *makePath, *kubectlPath)
+		deployer.ProcessStarted = time.Now()
 	}
 	server := httpd.New(logger, store, cluster.KubectlRunner(*kubectlPath, *kubeconfig, *kubeContext),
 		repo.GitRunner(*gitPath, defaultRoot), deployer, httpd.Config{

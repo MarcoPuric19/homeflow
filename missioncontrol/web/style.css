@@ -226,3 +226,19 @@ ul.changes li{margin:2px 0}
 ul.changes b{color:var(--warn)}
 p.nothing{color:var(--ok)}
 p.checked{font-size:11px;opacity:.7}
+svg.hist .surface{fill:transparent;cursor:crosshair}
+svg.hist .selection{fill:var(--accent);opacity:.22;pointer-events:none}
+.chip.range{border-color:var(--accent);color:var(--accent)}
+.waiting{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px}
+.waiting .titel{flex:1 1 240px}
+.waiting .hint{margin:0;flex:1 1 100%}
+.waiting.unreachable{opacity:.72}
+.tag.ok{color:var(--ok);border-color:#1d4b32}
+.ticketboxes{margin:8px 0 4px;padding:8px 10px;background:#0d1218;border:1px solid var(--line);border-radius:8px}
+.ticketboxes .hint{margin:0 0 4px}
+/* Nicht .inline erben: dort ist der Text ein anonymes Flex-Element und rutscht
+   bei langen Titeln unter das Kästchen. */
+.ticketbox{display:flex!important;align-items:flex-start;gap:8px;font-size:12px;color:var(--ink);margin:3px 0;font-weight:400;cursor:pointer}
+.ticketbox input{width:auto!important;flex:0 0 auto;margin:2px 0 0}
+.version.shipped{color:var(--ok);border-color:#1d4b32}
+.version.found{color:var(--dim);border-color:var(--line)}

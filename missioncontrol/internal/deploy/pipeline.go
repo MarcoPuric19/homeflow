@@ -22,6 +22,10 @@ type Step struct {
 	Args []string `json:"args"`
 }
 
+// Covers lists the repository paths a pipeline actually carries into a running
+// system. It is what makes the question answerable: a ticket whose scope
+// touches none of these cannot be accepted by any deployment, however green the
+// run goes.
 type Pipeline struct {
 	Name        string `json:"name"`
 	Title       string `json:"titel"`
@@ -29,6 +33,7 @@ type Pipeline struct {
 	// NeedsCluster makes the run refuse unless kubectl points at kind-dev.
 	NeedsCluster bool          `json:"brauchtCluster"`
 	Steps        []Step        `json:"schritte"`
+	Covers       []string      `json:"deckt_ab"`
 	Timeout      time.Duration `json:"-"`
 }
 
@@ -43,6 +48,7 @@ func Pipelines() []Pipeline {
 				"und wendet kubernetes/base an. Ersetzt die laufende Anwendung.",
 			NeedsCluster: true,
 			Timeout:      20 * time.Minute,
+			Covers:       []string{"backend/", "frontend/", "docker/", "kubernetes/base/"},
 			Steps: []Step{
 				{Name: "Prüfen", Args: []string{"ci"}},
 				{Name: "Image bauen", Args: []string{"docker-build"}},
@@ -56,10 +62,21 @@ func Pipelines() []Pipeline {
 			Description:  "Wendet monitoring/kubernetes an: Prometheus, Grafana, kube-state-metrics.",
 			NeedsCluster: true,
 			Timeout:      10 * time.Minute,
+			Covers:       []string{"monitoring/"},
 			Steps: []Step{
 				{Name: "Manifeste rendern", Args: []string{"monitoring-manifests"}},
 				{Name: "Anwenden", Args: []string{"monitoring-deploy"}},
 			},
+		},
+		{
+			Name:  "missioncontrol",
+			Title: "Mission Control bauen",
+			Description: "Prüft und baut das Cockpit selbst. Der laufende Dienst bleibt unberührt - " +
+				"das neue Binary liegt danach bereit und wird mit einem ausdrücklichen Neustart übernommen.",
+			NeedsCluster: false,
+			Timeout:      10 * time.Minute,
+			Covers:       []string{"missioncontrol/"},
+			Steps:        []Step{{Name: "Prüfen und bauen", Args: []string{"mission-control-ci"}}},
 		},
 		{
 			Name:         "pruefen",

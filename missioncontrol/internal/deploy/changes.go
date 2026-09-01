@@ -2,6 +2,8 @@ package deploy
 
 import (
 	"context"
+	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -42,6 +44,13 @@ func (r *Runner) Inspect(ctx context.Context, pipelineName string) Assessment {
 		return Assessment{Pipeline: pipelineName, Error: "unbekannte Pipeline"}
 	}
 	assessment := Assessment{Pipeline: pipeline.Name, Changes: []Difference{}, Checked: []string{}}
+	if pipeline.Name == "missioncontrol" {
+		r.compareBinary(&assessment)
+		if !assessment.HasChanges() && assessment.Error == "" {
+			assessment.Note = "Das gebaute Binary ist aktuell."
+		}
+		return assessment
+	}
 	if !pipeline.NeedsCluster {
 		assessment.Note = "Prüft nur und verändert nichts - darf deshalb immer laufen."
 		assessment.Changes = append(assessment.Changes, Difference{Kind: "Prüflauf", Detail: "ändert nichts"})
@@ -138,4 +147,66 @@ func (r *Runner) kubectlOutput(ctx context.Context, args ...string) ([]byte, err
 	cmd := exec.CommandContext(timeout, r.kubectl, args...)
 	cmd.Dir = r.root
 	return cmd.Output()
+}
+
+// compareBinary beantwortet für das Cockpit selbst, was kubectl diff für den
+// Cluster beantwortet: gibt es etwas zu tun? Verglichen wird der Zeitstempel
+// des gebauten Binaries mit dem neuesten Quelltext. Das ist eine Heuristik über
+// Änderungszeiten - sie irrt höchstens zugunsten von "es gibt etwas zu tun",
+// und das ist die richtige Richtung.
+func (r *Runner) compareBinary(assessment *Assessment) {
+	assessment.Checked = append(assessment.Checked, "Quelltext gegen missioncontrol/bin/missioncontrol")
+	binary := filepath.Join(r.root, "missioncontrol", "bin", "missioncontrol")
+	info, err := os.Stat(binary)
+	if err != nil {
+		assessment.Changes = append(assessment.Changes, Difference{
+			Kind: "Binary", Detail: "noch nicht gebaut"})
+		return
+	}
+	newer := newerThan(filepath.Join(r.root, "missioncontrol"), info.ModTime())
+	for _, file := range newer {
+		assessment.Changes = append(assessment.Changes, Difference{Kind: "Quelltext", Detail: file})
+	}
+
+	// Zweite Frage, und die eigentlich wichtige: läuft der Dienst überhaupt auf
+	// dem, was gebaut wurde? Ein Bauen allein ändert nichts am laufenden
+	// Prozess - ohne diese Prüfung meldet das Cockpit "nichts zu tun", während
+	// es selbst auf einem alten Binary läuft.
+	assessment.Checked = append(assessment.Checked, "gebautes Binary gegen den laufenden Dienst")
+	if !r.ProcessStarted.IsZero() && info.ModTime().After(r.ProcessStarted) {
+		assessment.Changes = append(assessment.Changes, Difference{
+			Kind:   "Neustart",
+			Detail: "Der Dienst läuft auf einem älteren Binary - Neustart übernimmt es."})
+	}
+}
+
+// newerThan lists source files younger than the build, at most a handful: the
+// point is to name examples, not to produce an inventory.
+func newerThan(root string, since time.Time) []string {
+	var out []string
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return nil
+		}
+		switch filepath.Ext(path) {
+		case ".go", ".js", ".css", ".html":
+		default:
+			return nil
+		}
+		// Das Binary selbst und alles darunter zählt nicht als Quelltext.
+		if strings.Contains(path, string(filepath.Separator)+"bin"+string(filepath.Separator)) {
+			return nil
+		}
+		info, statErr := entry.Info()
+		if statErr == nil && info.ModTime().After(since) {
+			if relative, relErr := filepath.Rel(root, path); relErr == nil {
+				out = append(out, relative)
+			}
+		}
+		if len(out) >= 5 {
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return out
 }
