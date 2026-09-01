@@ -1,0 +1,172 @@
+package tickets
+
+import (
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+)
+
+// The vocabulary of the board, kept small on purpose. It is modelled on Jira -
+// project, issue type, priority, epic, component, fix version - because that is
+// the vocabulary both of us already know, not because HomeFlow needs a process.
+
+// Projects. Mission Control versions itself independently of HomeFlow, so a
+// ticket has to say which product it belongs to before a version means anything.
+const (
+	ProjectHomeFlow = "HF"
+	ProjectMission  = "MC"
+)
+
+type Project struct {
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func Projects() []Project {
+	return []Project{
+		{Key: ProjectHomeFlow, Name: "HomeFlow", Description: "Die Haushaltsplattform selbst: Backend, Frontend, Kubernetes, Monitoring."},
+		{Key: ProjectMission, Name: "Mission Control", Description: "Das Cockpit. Eigener Lebenszyklus, eigene Versionen."},
+	}
+}
+
+// Issue types.
+const (
+	TypeEpic        = "Epic"
+	TypeTask        = "Task"
+	TypeBug         = "Bug"
+	TypeObservation = "Beobachtung"
+	TypeRecord      = "Protokoll"
+)
+
+// TypeRecord is what the old Austausch.md protocol became: a finished piece of
+// work that is kept for the record, not something anyone still acts on.
+func Types() []string {
+	return []string{TypeEpic, TypeTask, TypeBug, TypeObservation, TypeRecord}
+}
+
+const (
+	PriorityHigh   = "Hoch"
+	PriorityMedium = "Mittel"
+	PriorityLow    = "Niedrig"
+)
+
+func Priorities() []string { return []string{PriorityHigh, PriorityMedium, PriorityLow} }
+
+// The board columns, in order.
+const (
+	StatusBacklog = "Backlog"
+	StatusReady   = "Ready"
+	StatusActive  = "In Bearbeitung"
+	StatusTest    = "Test"
+	StatusDone    = "Fertig"
+)
+
+func Columns() []string {
+	return []string{StatusBacklog, StatusReady, StatusActive, StatusTest, StatusDone}
+}
+
+func valid(value string, allowed []string) bool {
+	for _, candidate := range allowed {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
+}
+
+func ValidStatus(status string) bool  { return valid(status, Columns()) }
+func ValidType(value string) bool     { return valid(value, Types()) }
+func ValidPriority(value string) bool { return valid(value, Priorities()) }
+func ValidProject(value string) bool  { return value == ProjectHomeFlow || value == ProjectMission }
+
+// legacyStatus maps the status names used before the board existed.
+func legacyStatus(status string) (string, bool) {
+	switch status {
+	case "offen":
+		return StatusBacklog, true
+	case "in Arbeit":
+		return StatusActive, true
+	case "wartet":
+		return StatusReady, true
+	case "erledigt", "verworfen":
+		return StatusDone, true
+	}
+	return "", false
+}
+
+// keyPattern doubles as the guard against path traversal: a key from a request
+// only ever becomes a filename after it matched this.
+var keyPattern = regexp.MustCompile(`^(HF|MC)-[0-9]{4}$`)
+
+func ValidKey(key string) bool { return keyPattern.MatchString(key) }
+
+type Comment struct {
+	Author string    `json:"author"`
+	At     time.Time `json:"at"`
+	Text   string    `json:"text"`
+}
+
+type Ticket struct {
+	Key      string `json:"key"`
+	Project  string `json:"project"`
+	Type     string `json:"type"`
+	Title    string `json:"title"`
+	Status   string `json:"status"`
+	Priority string `json:"priority"`
+	// Owner is the assignee, Reporter whoever raised it.
+	Owner    string `json:"owner"`
+	Reporter string `json:"reporter"`
+	// Version is the release of *this ticket's project* - HomeFlow's VERSION for
+	// HF tickets, Mission Control's own for MC tickets.
+	Version   string `json:"version"`
+	Epic      string `json:"epic,omitempty"`
+	Component string `json:"component,omitempty"`
+	// Scope names the files a ticket works on. It is what Austausch.md's claim
+	// table did by hand: a ticket in "In Bearbeitung" with a scope is a claim,
+	// and two such tickets on overlapping paths are a collision.
+	Scope     []string  `json:"scope"`
+	Tags      []string  `json:"tags"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	Body      string    `json:"body"`
+	Comments  []Comment `json:"comments"`
+}
+
+// Done reports whether a ticket still needs attention. Records are archive by
+// definition and never count as open work.
+func (t Ticket) Done() bool { return t.Status == StatusDone || t.Type == TypeRecord }
+
+// cleanScope keeps path patterns usable: trimmed, deduplicated, no commas or
+// line breaks, and no absolute paths - a scope is always relative to the repo.
+func cleanScope(scope []string) []string {
+	out := make([]string, 0, len(scope))
+	seen := map[string]bool{}
+	for _, entry := range scope {
+		entry = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(entry), "./"))
+		entry = strings.TrimPrefix(entry, "/")
+		if entry == "" || strings.ContainsAny(entry, "\n,") || seen[entry] || len(entry) > 200 {
+			continue
+		}
+		seen[entry] = true
+		out = append(out, entry)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func cleanTags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	seen := map[string]bool{}
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" || strings.ContainsAny(tag, "\n,") || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		out = append(out, tag)
+	}
+	sort.Strings(out)
+	return out
+}

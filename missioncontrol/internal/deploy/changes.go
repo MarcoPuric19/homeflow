@@ -1,0 +1,141 @@
+package deploy
+
+import (
+	"context"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+)
+
+// A deployment that changes nothing is not harmless: it replaces running pods,
+// kills open port-forwards and costs minutes of build time for no result. So
+// before a run may start, the runner asks what would actually change.
+type Difference struct {
+	Kind   string `json:"art"`
+	Detail string `json:"detail"`
+}
+
+type Assessment struct {
+	Pipeline string       `json:"pipeline"`
+	Changes  []Difference `json:"aenderungen"`
+	// Checked says what was compared, so "nothing to do" is traceable rather
+	// than a shrug.
+	Checked []string `json:"geprueft"`
+	Note    string   `json:"hinweis,omitempty"`
+	Error   string   `json:"fehler,omitempty"`
+}
+
+func (a Assessment) HasChanges() bool { return len(a.Changes) > 0 }
+
+var (
+	makefileVersion = regexp.MustCompile(`(?m)^VERSION \?= (.+)$`)
+	diffHeader      = regexp.MustCompile(`(?m)^diff -u -N \S+ (\S+)$`)
+)
+
+// Inspect compares the repository against the cluster. It never changes
+// anything: `kubectl diff` is a dry run, and everything else is a read.
+func (r *Runner) Inspect(ctx context.Context, pipelineName string) Assessment {
+	pipeline, ok := Find(pipelineName)
+	if !ok {
+		return Assessment{Pipeline: pipelineName, Error: "unbekannte Pipeline"}
+	}
+	assessment := Assessment{Pipeline: pipeline.Name, Changes: []Difference{}, Checked: []string{}}
+	if !pipeline.NeedsCluster {
+		assessment.Note = "Prüft nur und verändert nichts - darf deshalb immer laufen."
+		assessment.Changes = append(assessment.Changes, Difference{Kind: "Prüflauf", Detail: "ändert nichts"})
+		return assessment
+	}
+
+	switch pipeline.Name {
+	case "homeflow":
+		r.compareVersion(ctx, &assessment)
+		r.compareManifests(ctx, &assessment, filepath.Join("kubernetes", "base"))
+	case "monitoring":
+		r.compareManifests(ctx, &assessment, filepath.Join("monitoring", "kubernetes"))
+	}
+	if !assessment.HasChanges() && assessment.Error == "" {
+		assessment.Note = "Cluster und Repository stimmen überein."
+	}
+	return assessment
+}
+
+// compareVersion is the check that catches the case this project keeps hitting:
+// the repository moves on and the cluster keeps running an old image.
+func (r *Runner) compareVersion(ctx context.Context, assessment *Assessment) {
+	assessment.Checked = append(assessment.Checked, "VERSION in der Makefile gegen das laufende Image")
+	wanted := r.repoVersion()
+	if wanted == "" {
+		return
+	}
+	out, err := r.kubectlOutput(ctx, "-n", "homeflow", "get", "pods",
+		"-o", "jsonpath={.items[*].spec.containers[*].image}")
+	if err != nil {
+		assessment.Error = "Cluster nicht lesbar: " + err.Error()
+		return
+	}
+	running := ""
+	for _, image := range strings.Fields(string(out)) {
+		if strings.Contains(image, "homeflow/api:") {
+			running = image[strings.LastIndex(image, ":")+1:]
+		}
+	}
+	switch {
+	case running == "":
+		assessment.Changes = append(assessment.Changes, Difference{
+			Kind: "Version", Detail: "Im Cluster läuft kein HomeFlow-API-Pod; " + wanted + " wäre neu."})
+	case running != wanted:
+		assessment.Changes = append(assessment.Changes, Difference{
+			Kind: "Version", Detail: "Cluster " + running + " → Repository " + wanted})
+	}
+}
+
+// compareManifests asks kubectl itself. Only the names of the affected objects
+// are reported, never the diff body: it can contain configuration values, and
+// the cockpit has no business printing those.
+func (r *Runner) compareManifests(ctx context.Context, assessment *Assessment, dir string) {
+	assessment.Checked = append(assessment.Checked, "kubectl diff -k "+dir)
+	cmd := exec.CommandContext(ctx, r.kubectl, "diff", "-k", dir)
+	cmd.Dir = r.root
+	out, err := cmd.Output()
+	if err != nil {
+		// Exit code 1 is kubectl's way of saying "there are differences".
+		var exit *exec.ExitError
+		if !asExitError(err, &exit) || exit.ExitCode() != 1 {
+			assessment.Error = "kubectl diff fehlgeschlagen: " + err.Error()
+			return
+		}
+	}
+	for _, match := range diffHeader.FindAllStringSubmatch(string(out), -1) {
+		assessment.Changes = append(assessment.Changes, Difference{
+			Kind: "Manifest", Detail: filepath.Base(match[1])})
+	}
+}
+
+func asExitError(err error, target **exec.ExitError) bool {
+	exit, ok := err.(*exec.ExitError)
+	if ok {
+		*target = exit
+	}
+	return ok
+}
+
+func (r *Runner) repoVersion() string {
+	data, err := readFile(filepath.Join(r.root, "Makefile"))
+	if err != nil {
+		return ""
+	}
+	if match := makefileVersion.FindSubmatch(data); match != nil {
+		return strings.TrimSpace(string(match[1]))
+	}
+	return ""
+}
+
+func (r *Runner) kubectlOutput(ctx context.Context, args ...string) ([]byte, error) {
+	timeout, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(timeout, r.kubectl, args...)
+	cmd.Dir = r.root
+	return cmd.Output()
+}

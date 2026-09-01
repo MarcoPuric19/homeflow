@@ -1,0 +1,118 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: grafana-datasource, namespace: homeflow-monitoring }
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus.homeflow-monitoring.svc.cluster.local:9090
+        isDefault: true
+        editable: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: grafana-dashboard-provider, namespace: homeflow-monitoring }
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: HomeFlow
+        folder: HomeFlow
+        type: file
+        disableDeletion: true
+        editable: false
+        options: { path: /var/lib/grafana/dashboards }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: grafana-homeflow-dashboard, namespace: homeflow-monitoring }
+data:
+  homeflow.json: |
+    {
+      "annotations":{"list":[]},"editable":false,"graphTooltip":1,"schemaVersion":41,
+      "tags":["homeflow","local"],"templating":{"list":[]},"time":{"from":"now-6h","to":"now"},
+      "title":"HomeFlow Overview","uid":"homeflow-overview","version":1,
+      "panels":[
+        {"type":"stat","title":"API up","id":1,"gridPos":{"h":4,"w":4,"x":0,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"up{job=\"homeflow-api\"}","refId":"A"}]},
+        {"type":"stat","title":"Request rate","id":2,"gridPos":{"h":4,"w":5,"x":4,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum(rate(homeflow_http_requests_total[5m]))","refId":"A"}]},
+        {"type":"stat","title":"5xx error rate","id":3,"gridPos":{"h":4,"w":5,"x":9,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum(rate(homeflow_http_requests_total{status=~\"5..\"}[5m]))","refId":"A"}]},
+        {"type":"stat","title":"Expenses due","id":4,"gridPos":{"h":4,"w":5,"x":14,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"homeflow_expenses_due","refId":"A"}]},
+        {"type":"stat","title":"Login failures","id":5,"gridPos":{"h":4,"w":5,"x":19,"y":0},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"homeflow_login_failures_total","refId":"A"}]},
+        {"type":"timeseries","title":"HTTP p95 latency","id":6,"gridPos":{"h":8,"w":12,"x":0,"y":4},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"histogram_quantile(0.95, sum by (le, route) (rate(homeflow_http_request_duration_seconds_bucket[5m])))","legendFormat":"{{route}}","refId":"A"}]},
+        {"type":"timeseries","title":"HomeFlow pod memory","id":7,"gridPos":{"h":8,"w":12,"x":12,"y":4},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"sum by (pod) (container_memory_working_set_bytes{namespace=\"homeflow\",container!=\"\"})","legendFormat":"{{pod}}","refId":"A"}]},
+        {"type":"timeseries","title":"Database p95 latency","id":8,"gridPos":{"h":8,"w":12,"x":0,"y":12},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"histogram_quantile(0.95, sum by (le, operation) (rate(homeflow_db_query_duration_seconds_bucket[5m])))","legendFormat":"{{operation}}","refId":"A"}]},
+        {"type":"timeseries","title":"Ready replicas","id":9,"gridPos":{"h":8,"w":12,"x":12,"y":12},"datasource":{"type":"prometheus","uid":"prometheus"},"targets":[{"expr":"kube_deployment_status_replicas_ready{namespace=~\"homeflow|homeflow-monitoring\"}","legendFormat":"{{namespace}}/{{deployment}}","refId":"A"}]}
+      ]
+    }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: grafana-data, namespace: homeflow-monitoring }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: grafana, namespace: homeflow-monitoring }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: grafana } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: grafana, app.kubernetes.io/part-of: homeflow } }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        runAsGroup: 472
+        fsGroup: 472
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: grafana
+          image: grafana/grafana:13.2.0
+          env:
+            - { name: GF_SECURITY_ADMIN_USER, value: admin }
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: grafana-admin, key: admin-password } }
+            - { name: GF_USERS_ALLOW_SIGN_UP, value: "false" }
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "false" }
+            - { name: GF_ANALYTICS_REPORTING_ENABLED, value: "false" }
+            - { name: GF_ANALYTICS_CHECK_FOR_UPDATES, value: "false" }
+            - { name: GF_NEWS_NEWS_FEED_ENABLED, value: "false" }
+            - { name: GF_PLUGINS_PLUGIN_ADMIN_ENABLED, value: "false" }
+          ports: [{ name: http, containerPort: 3000 }]
+          startupProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe: { httpGet: { path: /api/health, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /api/health, port: http }, periodSeconds: 15 }
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/grafana }
+            - { name: datasource, mountPath: /etc/grafana/provisioning/datasources, readOnly: true }
+            - { name: providers, mountPath: /etc/grafana/provisioning/dashboards, readOnly: true }
+            - { name: dashboards, mountPath: /var/lib/grafana/dashboards, readOnly: true }
+      volumes:
+        - { name: data, persistentVolumeClaim: { claimName: grafana-data } }
+        - { name: datasource, configMap: { name: grafana-datasource } }
+        - { name: providers, configMap: { name: grafana-dashboard-provider } }
+        - { name: dashboards, configMap: { name: grafana-homeflow-dashboard } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: grafana, namespace: homeflow-monitoring }
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: grafana }
+  ports: [{ name: http, port: 3000, targetPort: http }]

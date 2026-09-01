@@ -1,0 +1,1347 @@
+openapi: 3.1.0
+info:
+  title: HomeFlow API
+  version: 0.15.3
+  description: Private, local-first household API. No public registration exists.
+servers:
+  - url: http://localhost:8080
+    description: Local development only
+tags:
+  - name: System
+  - name: Authentication
+  - name: Shopping
+  - name: Expenses
+  - name: Receipts
+  - name: Pets
+paths:
+  /health:
+    get:
+      tags: [System]
+      operationId: getHealth
+      summary: Process health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /metrics:
+    get:
+      tags: [System]
+      operationId: getPrometheusMetrics
+      summary: Prometheus text exposition without private labels or values
+      responses:
+        "200":
+          description: Local application and runtime metrics
+          content:
+            text/plain:
+              schema: { type: string }
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      operationId: login
+      summary: Exchange credentials for an opaque token pair
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { description: Too many attempts; retry after the Retry-After interval }
+  /api/v1/auth/refresh:
+    post:
+      tags: [Authentication]
+      operationId: refreshTokens
+      summary: Rotate a refresh token and revoke the previous token pair
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: Rotated token pair
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenPair" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      summary: Revoke the session represented by a refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "204": { description: Session revoked or already absent }
+  /api/v1/auth/browser/login:
+    post:
+      tags: [Authentication]
+      operationId: browserLogin
+      summary: Start a same-origin browser session using HttpOnly cookies
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+      responses:
+        "200": { description: Browser cookies and a CSRF token were issued }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { description: Too many login attempts }
+  /api/v1/auth/browser/refresh:
+    post:
+      tags: [Authentication]
+      operationId: browserRefresh
+      summary: Rotate the browser refresh cookie and renew the session
+      responses:
+        "200": { description: Browser session renewed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/auth/browser/logout:
+    post:
+      tags: [Authentication]
+      operationId: browserLogout
+      summary: Revoke and clear the browser session
+      parameters:
+        - in: header
+          name: X-CSRF-Token
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Browser session revoked and cookies cleared }
+        "403": { description: CSRF token missing or invalid }
+  /api/v1/shopping/items:
+    get:
+      tags: [Shopping]
+      operationId: listShoppingItems
+      summary: List items on a shopping list
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: listId
+          schema: { type: string, default: shared }
+        - in: query
+          name: includeCompleted
+          schema: { type: boolean, default: false }
+        - in: query
+          name: petId
+          description: Restrict items to one pet in the caller's household
+          schema: { type: string, format: uuid }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        "200":
+          description: Items
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ShoppingItem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Shopping]
+      operationId: createShoppingItem
+      summary: Add an item
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateShoppingItem" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ShoppingItem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422":
+          description: Validation failed
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+  /api/v1/shopping/items/{itemId}/complete:
+    post:
+      tags: [Shopping]
+      operationId: completeShoppingItem
+      summary: Mark an item as purchased
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: itemId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Completed item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ShoppingItem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Item not found
+        "409":
+          description: Item already completed
+  /api/v1/shopping/lists:
+    get:
+      tags: [Shopping]
+      operationId: listShoppingLists
+      summary: List shopping lists visible inside the caller's household
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: At most 100 visible lists
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lists]
+                properties:
+                  lists: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/ShoppingList" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/expenses:
+    get:
+      tags: [Expenses]
+      operationId: listExpenses
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: month
+          schema: { type: string, pattern: "^[0-9]{4}-[0-9]{2}$" }
+        - in: query
+          name: petId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        "200": { description: Expenses for the optional month filter }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Expenses]
+      operationId: createExpense
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateExpense" }
+      responses:
+        "201":
+          description: Created expense
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Expense" }
+        "422": { description: Invalid expense }
+  /api/v1/expenses/{expenseId}/paid:
+    post:
+      tags: [Expenses]
+      operationId: markExpensePaid
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: expenseId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [actualAmountCents]
+              properties:
+                actualAmountCents: { type: integer, format: int64, minimum: 0 }
+                paidAt: { type: string, format: date-time }
+      responses:
+        "200": { description: Paid expense }
+        "404": { description: Expense not found }
+        "409": { description: Expense already paid or cancelled }
+  /api/v1/expense-summaries/{month}:
+    get:
+      tags: [Expenses]
+      operationId: getExpenseMonthlySummary
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: month
+          required: true
+          schema: { type: string, pattern: "^[0-9]{4}-[0-9]{2}$" }
+      responses:
+        "200": { description: Planned, actual, open and difference amounts in cents }
+  /api/v1/pets/{petId}/budgets:
+    parameters:
+      - in: path
+        name: petId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Expenses, Pets]
+      operationId: listPetBudgets
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: month
+          required: true
+          schema: { type: string, pattern: "^[0-9]{4}-[0-9]{2}$" }
+      responses:
+        "200":
+          description: At most 100 budget categories for the pet and month
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [budgets]
+                properties:
+                  budgets: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/PetBudget" } }
+        "404": { description: Pet not found in the caller's household }
+    put:
+      tags: [Expenses, Pets]
+      operationId: upsertPetBudget
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PetBudgetInput" }
+      responses:
+        "200":
+          description: Budget category created or replaced
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PetBudget" }
+        "404": { description: Pet not found in the caller's household }
+        "422": { description: Invalid budget }
+  /api/v1/pets/{petId}/expense-summary:
+    get:
+      tags: [Expenses, Pets]
+      operationId: getPetExpenseSummary
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: petId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: period
+          required: true
+          description: A bounded calendar month or year
+          schema: { type: string, pattern: "^[0-9]{4}(-[0-9]{2})?$" }
+      responses:
+        "200":
+          description: Expense and budget totals by category for the requested month or year
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PetExpenseSummary" }
+        "404": { description: Pet not found in the caller's household }
+  /api/v1/pets/{petId}/documents:
+    parameters:
+      - in: path
+        name: petId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Pets]
+      operationId: listPetDocuments
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        "200":
+          description: At most 100 medical document metadata records; storage keys are never exposed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [documents]
+                properties:
+                  documents: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/PetDocument" } }
+        "404": { description: Pet not found in the caller's household }
+    post:
+      tags: [Pets]
+      operationId: uploadPetDocument
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, title, documentType]
+              properties:
+                file: { type: string, format: binary, description: JPEG, PNG or PDF; maximum 10 MiB }
+                title: { type: string, minLength: 1, maxLength: 200 }
+                documentType: { type: string, enum: [report, lab, vaccination, imaging, insurance, other] }
+                occurredOn: { type: string, format: date }
+                notes: { type: string, maxLength: 2000 }
+      responses:
+        "201":
+          description: Medical document stored locally
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PetDocument" }
+        "413": { description: Document exceeds 10 MiB }
+        "415": { description: Unsupported file signature }
+        "422": { description: Invalid metadata }
+  /api/v1/pets/{petId}/documents/{documentId}/links:
+    parameters:
+      - { in: path, name: petId, required: true, schema: { type: string, format: uuid } }
+      - { in: path, name: documentId, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Pets]
+      operationId: getPetDocumentLinks
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Bounded relationships, content: { application/json: { schema: { $ref: "#/components/schemas/RelationshipSet" } } } }
+        "404": { description: Document not found in the caller household and pet }
+    put:
+      tags: [Pets]
+      operationId: replacePetDocumentLinks
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RelationshipSet" } } }
+      responses:
+        "200": { description: Atomically replaced relationships, content: { application/json: { schema: { $ref: "#/components/schemas/RelationshipSet" } } } }
+        "404": { description: Source or same-pet target not found }
+  /api/v1/expenses/{expenseId}/pet-links:
+    parameters:
+      - { in: path, name: expenseId, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Expenses, Pets]
+      operationId: getExpensePetLinks
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Bounded relationships, content: { application/json: { schema: { $ref: "#/components/schemas/RelationshipSet" } } } }
+        "404": { description: Pet expense not found in the caller household }
+    put:
+      tags: [Expenses, Pets]
+      operationId: replaceExpensePetLinks
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RelationshipSet" } } }
+      responses:
+        "200": { description: Atomically replaced relationships, content: { application/json: { schema: { $ref: "#/components/schemas/RelationshipSet" } } } }
+        "404": { description: Source or same-pet target not found }
+  /api/v1/pets/{petId}/weights:
+    parameters:
+      - in: path
+        name: petId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Pets]
+      operationId: listPetWeights
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        "200": { description: At most 100 newest weight entries }
+        "404": { description: Pet not found in the caller's household }
+    post:
+      tags: [Pets]
+      operationId: createPetWeight
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WeightInput" }
+      responses:
+        "201": { description: Weight entry stored exactly as supplied }
+        "422": { description: Invalid measurement }
+  /api/v1/pets/{petId}/dashboard:
+    get:
+      tags: [Pets]
+      operationId: getPetDashboard
+      summary: Load the bounded pet overview in one database round-trip
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: petId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: month
+          required: true
+          schema: { type: string, pattern: "^[0-9]{4}-[0-9]{2}$" }
+      responses:
+        "200":
+          description: Household-scoped operational summary for one pet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PetDashboard" }
+        "404": { description: Pet not found in the caller's household }
+  /api/v1/pets/{petId}/lab-results:
+    parameters:
+      - in: path
+        name: petId
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Pets]
+      operationId: listPetLabResults
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        "200": { description: At most 100 newest documented lab results }
+        "404": { description: Pet not found in the caller's household }
+    post:
+      tags: [Pets]
+      operationId: createPetLabResult
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LabResultInput" }
+      responses:
+        "201": { description: Lab value stored without medical interpretation }
+        "422": { description: Invalid measurement }
+  /api/v1/reminders:
+    get:
+      tags: [Pets]
+      operationId: listDerivedReminders
+      summary: Derive reminders on read; no background delivery occurs
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: until
+          required: true
+          schema: { type: string, format: date }
+          description: Inclusive horizon, at most 366 days from today
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        "200":
+          description: Upcoming manual vaccination due dates and planned pet appointments
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reminders]
+                properties:
+                  reminders: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/Reminder" } }
+        "400": { description: Invalid or unbounded horizon }
+  /api/v1/pets/{petId}/documents/{documentId}/content:
+    get:
+      tags: [Pets]
+      operationId: downloadPetDocument
+      summary: Download as an attachment after household authorization
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: petId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: documentId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Attachment with a pinned content type and sandbox CSP
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            application/pdf: { schema: { type: string, format: binary } }
+        "404": { description: Document or pet not found in the caller's household }
+  /api/v1/expenses/{expenseId}/receipts:
+    get:
+      tags: [Receipts]
+      operationId: listExpenseReceipts
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: expenseId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Receipt metadata; file storage keys are never exposed }
+    post:
+      tags: [Receipts]
+      operationId: uploadReceipt
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: expenseId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: Valid JPEG, PNG or PDF; maximum 10 MiB }
+                merchant: { type: string }
+                receiptDate: { type: string, format: date }
+                totalAmountCents: { type: integer, format: int64, minimum: 0 }
+                currency: { type: string, default: EUR }
+                category: { type: string }
+      responses:
+        "201": { description: Stored receipt metadata }
+        "413": { description: Upload exceeds 10 MiB }
+        "415": { description: Invalid or unsupported file signature }
+  /api/v1/expenses/{expenseId}/receipts/{receiptId}/content:
+    get:
+      tags: [Receipts]
+      operationId: downloadReceipt
+      summary: Download a stored receipt file
+      description: >-
+        Returns the stored bytes. The response is always an attachment: the
+        Content-Type is pinned to the type detected at upload time, never
+        derived from the request, and the file is never rendered inline.
+        Storage keys stay server-side; the file is addressed by receipt id,
+        and the receipt must belong to the expense in the path.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: expenseId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: receiptId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The stored receipt file
+          headers:
+            Content-Disposition:
+              description: Always `attachment`, with the sanitised original filename
+              schema: { type: string }
+            X-Content-Type-Options:
+              description: Always `nosniff`
+              schema: { type: string }
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            application/pdf: { schema: { type: string, format: binary } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such receipt for this expense }
+  /api/v1/calendar/events:
+    get:
+      tags: [Calendar]
+      operationId: listCalendarEvents
+      summary: List events overlapping a time range
+      description: >-
+        Returns shared events plus the caller's own private events, ordered by
+        start instant. An event is included when it overlaps the range, not
+        only when it starts inside it. Recurrence rules are stored but never
+        expanded: a recurring event appears once, at its first occurrence.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: from
+          required: true
+          description: Start of the range, RFC 3339 instant or a plain date (UTC midnight)
+          schema: { type: string }
+        - in: query
+          name: to
+          required: true
+          description: End of the range, exclusive; at most 366 days after `from`
+          schema: { type: string }
+        - in: query
+          name: petId
+          description: Restrict the bounded range to one pet in the caller's household
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Matching events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events: { type: array, items: { $ref: "#/components/schemas/CalendarEvent" } }
+        "400": { description: Missing, unparsable or inverted range }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Calendar]
+      operationId: createCalendarEvent
+      summary: Create an event
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CalendarEventInput" }
+      responses:
+        "201":
+          description: The created event
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalendarEvent" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { description: Invalid event }
+  /api/v1/calendar/events/{eventId}:
+    get:
+      tags: [Calendar]
+      operationId: getCalendarEvent
+      summary: Read one event
+      description: >-
+        A private event belonging to the other household member answers 404,
+        not 403: its existence is not disclosed.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: eventId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The event
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalendarEvent" }
+        "400": { description: Malformed event id }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such event for this user }
+    put:
+      tags: [Calendar]
+      operationId: updateCalendarEvent
+      summary: Replace the mutable fields of an event
+      description: >-
+        Shared events may be edited by both household members; a private event
+        only by its owner. The owner never changes.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: eventId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CalendarEventInput" }
+      responses:
+        "200":
+          description: The updated event
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CalendarEvent" }
+        "400": { description: Malformed event id }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such event for this user }
+        "422": { description: Invalid event }
+    delete:
+      tags: [Calendar]
+      operationId: deleteCalendarEvent
+      summary: Delete an event
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: eventId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
+        "400": { description: Malformed event id }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such event for this user }
+  /api/v1/pets:
+    get:
+      tags: [Pets]
+      operationId: listPets
+      summary: List pets visible to the caller's household
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: includeInactive
+          schema: { type: boolean, default: false }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - in: query
+          name: after
+          description: Opaque keyset cursor returned as nextCursor
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Bounded page of household pets
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PetPage" }
+        "400": { description: Invalid pagination parameters }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [Pets]
+      operationId: createPet
+      summary: Create a pet in the caller's household
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PetInput" }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Pet" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { description: Invalid pet }
+  /api/v1/pets/{petId}:
+    get:
+      tags: [Pets]
+      operationId: getPet
+      summary: Read one pet in the caller's household
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: petId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Pet, content: { application/json: { schema: { $ref: "#/components/schemas/Pet" } } } }
+        "400": { description: Malformed pet id }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such pet in the caller's household }
+    patch:
+      tags: [Pets]
+      operationId: updatePet
+      summary: Replace mutable pet fields or archive/reactivate a pet
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: petId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PetInput" }
+      responses:
+        "200": { description: Updated pet, content: { application/json: { schema: { $ref: "#/components/schemas/Pet" } } } }
+        "400": { description: Malformed pet id }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such pet in the caller's household }
+        "422": { description: Invalid pet }
+  /api/v1/pets/{petId}/medical-records:
+    get:
+      tags: [Pets]
+      operationId: listPetMedicalRecords
+      summary: List a pet's medical timeline newest first
+      description: Stored documentation only; HomeFlow does not generate medical advice.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: petId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 30 }
+        - in: query
+          name: cursor
+          description: Opaque keyset cursor returned as nextCursor
+          schema: { type: string }
+      responses:
+        "200": { description: Bounded medical timeline, content: { application/json: { schema: { $ref: "#/components/schemas/MedicalRecordPage" } } } }
+        "400": { description: Invalid pet id or pagination }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such pet in the caller's household }
+    post:
+      tags: [Pets]
+      operationId: createPetMedicalRecord
+      summary: Add a documented medical event to a pet
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: petId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MedicalRecordInput" }
+      responses:
+        "201": { description: Recorded, content: { application/json: { schema: { $ref: "#/components/schemas/MedicalRecord" } } } }
+        "400": { description: Malformed pet id or request body }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such pet in the caller's household }
+        "422": { description: Invalid medical record }
+  /api/v1/pets/{petId}/vaccinations:
+    get:
+      tags: [Pets]
+      operationId: listPetVaccinations
+      summary: List documented vaccinations newest first
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: petId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+        - { in: query, name: cursor, description: Opaque keyset cursor, schema: { type: string } }
+      responses:
+        "200": { description: Bounded vaccination history, content: { application/json: { schema: { $ref: "#/components/schemas/VaccinationPage" } } } }
+        "400": { description: Invalid pet id or pagination }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such pet in the caller's household }
+    post:
+      tags: [Pets]
+      operationId: createPetVaccination
+      summary: Document a vaccination and an optional manually supplied next due date
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: petId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/VaccinationInput" } } }
+      responses:
+        "201": { description: Documented, content: { application/json: { schema: { $ref: "#/components/schemas/Vaccination" } } } }
+        "400": { description: Malformed pet id or body }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such pet in the caller's household }
+        "422": { description: Invalid vaccination }
+  /api/v1/pets/{petId}/medications:
+    get:
+      tags: [Pets]
+      operationId: listPetMedications
+      summary: List documented medication assignments for a pet
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: petId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: includeInactive, schema: { type: boolean, default: false } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 100 } }
+      responses:
+        "200": { description: Bounded medication list, content: { application/json: { schema: { $ref: "#/components/schemas/PetMedicationPage" } } } }
+        "400": { description: Invalid pet id or query }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such pet in the caller's household }
+    post:
+      tags: [Pets]
+      operationId: createPetMedication
+      summary: Document a medication assignment and its current stock
+      description: HomeFlow stores user-supplied values and never calculates dose, frequency or consumption.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { in: path, name: petId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PetMedicationInput" } } }
+      responses:
+        "201": { description: Documented, content: { application/json: { schema: { $ref: "#/components/schemas/PetMedication" } } } }
+        "400": { description: Malformed pet id or body }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: No such pet in the caller's household }
+        "422": { description: Invalid medication assignment }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Opaque short-lived access token issued by the local HomeFlow authentication service.
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      headers:
+        WWW-Authenticate: { schema: { type: string } }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  schemas:
+    RelationshipSet:
+      type: object
+      additionalProperties: false
+      required: [medicalRecordIds, appointmentIds]
+      properties:
+        medicalRecordIds: { type: array, maxItems: 100, uniqueItems: true, items: { type: string, format: uuid } }
+        appointmentIds: { type: array, maxItems: 100, uniqueItems: true, items: { type: string, format: uuid } }
+    ShoppingList:
+      type: object
+      required: [id, name, visibility]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        visibility: { type: string, enum: [shared, private] }
+    PetMedicationInput:
+      type: object
+      additionalProperties: false
+      required: [name, doseText, frequencyText, startsOn, stockQuantity]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        activeIngredient: { type: string, maxLength: 200 }
+        dosageForm: { type: string, maxLength: 100 }
+        doseText: { type: string, minLength: 1, maxLength: 200, description: User-supplied documentation only }
+        frequencyText: { type: string, minLength: 1, maxLength: 200, description: User-supplied documentation only }
+        startsOn: { type: string, format: date }
+        endsOn: { type: string, format: date }
+        stockQuantity: { type: string, pattern: "^(0|[1-9][0-9]{0,8})(\\.[0-9]{1,3})?$", description: Exact decimal string; no automatic consumption }
+        stockUnit: { type: string, maxLength: 50 }
+        notes: { type: string, maxLength: 2000 }
+        active: { type: boolean, default: true }
+    PetMedication:
+      allOf:
+        - $ref: "#/components/schemas/PetMedicationInput"
+        - type: object
+          required: [id, petId, medicationId, active, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            petId: { type: string, format: uuid }
+            medicationId: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    PetMedicationPage:
+      type: object
+      required: [medications]
+      properties:
+        medications: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/PetMedication" } }
+    VaccinationInput:
+      type: object
+      additionalProperties: false
+      required: [vaccineName, administeredOn]
+      properties:
+        vaccineName: { type: string, minLength: 1, maxLength: 200 }
+        manufacturer: { type: string, maxLength: 200 }
+        diseases:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 100 }
+        administeredOn: { type: string, format: date, description: Must not be in the future }
+        validUntil: { type: string, format: date, description: Manually supplied and not before administeredOn }
+        nextDueDate: { type: string, format: date, description: Manually supplied; never calculated by HomeFlow }
+        documentId: { type: string, format: uuid, description: Optional document belonging to the same household and pet }
+        veterinarian: { type: string, maxLength: 200 }
+        batchNumber: { type: string, maxLength: 100 }
+        notes: { type: string, maxLength: 2000 }
+    Vaccination:
+      allOf:
+        - $ref: "#/components/schemas/VaccinationInput"
+        - type: object
+          required: [id, petId, diseases, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            petId: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    VaccinationPage:
+      type: object
+      required: [vaccinations]
+      properties:
+        vaccinations: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/Vaccination" } }
+        nextCursor: { type: string }
+    MedicalRecordInput:
+      type: object
+      additionalProperties: false
+      required: [recordType, occurredOn, title]
+      properties:
+        recordType: { type: string, enum: [diagnosis, treatment, procedure, examination, note, imaging, report] }
+        occurredOn: { type: string, format: date, description: Must not be in the future }
+        title: { type: string, minLength: 1, maxLength: 200 }
+        summary: { type: string, maxLength: 4000 }
+        veterinarian: { type: string, maxLength: 200 }
+        details:
+          type: object
+          maxProperties: 20
+          additionalProperties: { type: string, maxLength: 1000 }
+    MedicalRecord:
+      allOf:
+        - $ref: "#/components/schemas/MedicalRecordInput"
+        - type: object
+          required: [id, petId, details, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            petId: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    MedicalRecordPage:
+      type: object
+      required: [records]
+      properties:
+        records: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/MedicalRecord" } }
+        nextCursor: { type: string }
+    PetInput:
+      type: object
+      additionalProperties: false
+      required: [name, species]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        species: { type: string, minLength: 1, maxLength: 80 }
+        breed: { type: string, maxLength: 120 }
+        birthDate: { type: string, format: date }
+        approximateBirthDate: { type: boolean, default: false, description: True only when birthDate is present and approximate }
+        sex: { type: string, enum: [female, male, unknown], default: unknown }
+        microchipNumber: { type: string, minLength: 5, maxLength: 50 }
+        color: { type: string, maxLength: 100 }
+        insurance: { type: string, maxLength: 200 }
+        insuranceNumber: { type: string, maxLength: 100 }
+        veterinarian: { type: string, maxLength: 200 }
+        notes: { type: string, maxLength: 2000 }
+        active: { type: boolean, default: true }
+    Pet:
+      allOf:
+        - $ref: "#/components/schemas/PetInput"
+        - type: object
+          required: [id, approximateBirthDate, active, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    PetPage:
+      type: object
+      required: [pets]
+      properties:
+        pets: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/Pet" } }
+        nextCursor: { type: string, format: uuid }
+    CalendarEvent:
+      type: object
+      required: [id, title, startsAt, endsAt, allDay, ownerId, visibility, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 300 }
+        description: { type: string }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time, description: Never before startsAt }
+        allDay: { type: boolean }
+        category: { type: string }
+        ownerId: { type: string, format: uuid }
+        visibility: { type: string, enum: [shared, private] }
+        recurrenceRule: { type: string, description: RFC 5545 RRULE, stored verbatim and never expanded }
+        reminderMinutes: { type: integer, minimum: 0, description: Stored only; nothing delivers reminders yet }
+        status: { type: string, enum: [planned, completed, cancelled] }
+        petId: { type: string, format: uuid }
+        appointmentType: { type: string, enum: [veterinarian, vaccination, medication, grooming, other] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CalendarEventInput:
+      type: object
+      required: [title, startsAt, endsAt]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 300 }
+        description: { type: string, maxLength: 2000 }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        allDay: { type: boolean, default: false }
+        category: { type: string, maxLength: 100 }
+        visibility: { type: string, enum: [shared, private], default: shared }
+        recurrenceRule: { type: string, maxLength: 500 }
+        reminderMinutes: { type: integer, minimum: 0, maximum: 40320 }
+        status: { type: string, enum: [planned, completed, cancelled], default: planned }
+        petId: { type: string, format: uuid }
+        appointmentType: { type: string, enum: [veterinarian, vaccination, medication, grooming, other], description: Required when petId is present and forbidden otherwise }
+    Health:
+      type: object
+      required: [status, service]
+      properties:
+        status: { type: string, const: ok }
+        service: { type: string, const: homeflow }
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string, minLength: 32 }
+    TokenPair:
+      type: object
+      required: [accessToken, accessExpiresAt, refreshToken, refreshExpiresAt, tokenType]
+      properties:
+        accessToken: { type: string }
+        accessExpiresAt: { type: string, format: date-time }
+        refreshToken: { type: string }
+        refreshExpiresAt: { type: string, format: date-time }
+        tokenType: { type: string, const: Bearer }
+    CreateShoppingItem:
+      type: object
+      additionalProperties: false
+      required: [name, quantity]
+      properties:
+        listId: { type: string, default: shared }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        quantity: { type: string, minLength: 1, maxLength: 40 }
+        unit: { type: string }
+        category: { type: string }
+        note: { type: string }
+        priority: { type: string, enum: [low, normal, high], default: normal }
+        store: { type: string }
+        petIds:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    ShoppingItem:
+      allOf:
+        - $ref: "#/components/schemas/CreateShoppingItem"
+        - type: object
+          required: [id, addedBy, completed, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            addedBy: { type: string }
+            completed: { type: boolean }
+            purchasedBy: { type: string }
+            completedAt: { type: string, format: date-time }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    CreateExpense:
+      type: object
+      additionalProperties: false
+      required: [description, plannedAmountCents, dueDate]
+      properties:
+        description: { type: string, minLength: 1, maxLength: 300 }
+        merchant: { type: string }
+        plannedAmountCents: { type: integer, format: int64, minimum: 0 }
+        currency: { type: string, default: EUR }
+        dueDate: { type: string, format: date }
+        category: { type: string }
+        recurrenceRule: { type: string }
+        status: { type: string, enum: [planned, open], default: planned }
+        paymentMethod: { type: string }
+        notes: { type: string }
+        petId: { type: string, format: uuid }
+        budgetCategory: { type: string, maxLength: 100 }
+    Expense:
+      allOf:
+        - $ref: "#/components/schemas/CreateExpense"
+        - type: object
+          required: [id, status, userId, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            actualAmountCents: { type: integer, format: int64, minimum: 0 }
+            paidAt: { type: string, format: date-time }
+            userId: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    PetBudgetInput:
+      type: object
+      additionalProperties: false
+      required: [month, category, amountCents]
+      properties:
+        month: { type: string, pattern: "^[0-9]{4}-[0-9]{2}$" }
+        category: { type: string, minLength: 1, maxLength: 100 }
+        amountCents: { type: integer, format: int64, minimum: 0 }
+        currency: { type: string, default: EUR }
+    PetBudget:
+      allOf:
+        - $ref: "#/components/schemas/PetBudgetInput"
+        - type: object
+          required: [id, petId, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            petId: { type: string, format: uuid }
+            updatedAt: { type: string, format: date-time }
+    PetExpenseSummary:
+      type: object
+      required: [petId, period, categories]
+      properties:
+        petId: { type: string, format: uuid }
+        period: { type: string, pattern: "^[0-9]{4}(-[0-9]{2})?$" }
+        categories:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [category, plannedAmountCents, actualAmountCents, budgetAmountCents]
+            properties:
+              category: { type: string }
+              plannedAmountCents: { type: integer, format: int64 }
+              actualAmountCents: { type: integer, format: int64 }
+              budgetAmountCents: { type: integer, format: int64 }
+    PetDocument:
+      type: object
+      required: [id, petId, title, documentType, originalFilename, mimeType, sha256, uploadedBy, uploadedAt]
+      properties:
+        id: { type: string, format: uuid }
+        petId: { type: string, format: uuid }
+        title: { type: string }
+        documentType: { type: string, enum: [report, lab, vaccination, imaging, insurance, other] }
+        occurredOn: { type: string, format: date }
+        notes: { type: string }
+        originalFilename: { type: string }
+        mimeType: { type: string, enum: [image/jpeg, image/png, application/pdf] }
+        sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+        uploadedBy: { type: string, format: uuid }
+        uploadedAt: { type: string, format: date-time }
+    WeightInput:
+      type: object
+      additionalProperties: false
+      required: [measuredOn, weightKg]
+      properties:
+        measuredOn: { type: string, format: date }
+        weightKg: { type: string, pattern: "^(0\\.[0-9]{1,3}|[1-9][0-9]{0,6}(\\.[0-9]{1,3})?)$" }
+        notes: { type: string, maxLength: 1000 }
+    LabResultInput:
+      type: object
+      additionalProperties: false
+      required: [measuredOn, testName, value]
+      properties:
+        measuredOn: { type: string, format: date }
+        testName: { type: string, minLength: 1, maxLength: 200 }
+        value: { type: string, pattern: "^-?(0|[1-9][0-9]{0,9})(\\.[0-9]{1,4})?$" }
+        unit: { type: string, maxLength: 50 }
+        referenceLow: { type: string }
+        referenceHigh: { type: string }
+        notes: { type: string, maxLength: 1000 }
+    Reminder:
+      type: object
+      required: [id, kind, petId, title, dueDate, daysUntil]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [vaccination, appointment] }
+        petId: { type: string, format: uuid }
+        title: { type: string }
+        dueDate: { type: string, format: date }
+        daysUntil: { type: integer, minimum: 0, maximum: 366 }
+    PetDashboard:
+      type: object
+      required: [petId, petName, medicalRecordCount, documentCount, activeMedicationCount, openShoppingItemCount, month, budgetAmountCents, plannedAmountCents, actualAmountCents]
+      properties:
+        petId: { type: string, format: uuid }
+        petName: { type: string }
+        medicalRecordCount: { type: integer, minimum: 0 }
+        documentCount: { type: integer, minimum: 0 }
+        activeMedicationCount: { type: integer, minimum: 0 }
+        openShoppingItemCount: { type: integer, minimum: 0 }
+        latestWeightKg: { type: string }
+        latestWeightDate: { type: string, format: date }
+        nextVaccinationName: { type: string }
+        nextVaccinationDate: { type: string, format: date }
+        nextAppointmentTitle: { type: string }
+        nextAppointmentAt: { type: string, format: date-time }
+        month: { type: string, pattern: "^[0-9]{4}-[0-9]{2}$" }
+        budgetAmountCents: { type: integer, format: int64 }
+        plannedAmountCents: { type: integer, format: int64 }
+        actualAmountCents: { type: integer, format: int64 }
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }

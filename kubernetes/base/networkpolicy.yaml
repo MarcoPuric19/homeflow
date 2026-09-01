@@ -1,0 +1,122 @@
+# HomeFlow network isolation (namespace: homeflow)
+#
+# Diese Policies werden auf dem lokalen kind-Cluster ERZWUNGEN: kindnetd
+# v20250512 bringt kube-network-policies als NRI-Plugin mit (nftables-Tabelle
+# `inet kindnet-network-policies`). Am 2026-08-31 empirisch nachgewiesen —
+# Methode und Ergebnis stehen in Austausch.md, Beobachtung 7.2.
+#
+# Konsequenz: ein falscher Selektor bricht echten Verkehr, statt folgenlos zu
+# bleiben. Jede Änderung hier wird getestet, nicht nur gerendert.
+#
+# Nicht abgedeckt: Namespace homeflow-monitoring. Prometheus braucht Egress
+# zum Kubernetes-API-Server (cAdvisor-Scrape über den Node-Proxy). Diese Regel
+# wird geschrieben, sobald der Monitoring-Stack auf diesem Cluster wirklich
+# läuft — dann ist sie testbar statt geraten.
+---
+# Grundregel: alles verboten, was nicht ausdrücklich erlaubt ist.
+# Ausgenommen bleiben Kubelet-Probes und `kubectl port-forward`: beide laufen
+# nicht über den CNI-Datenpfad, sondern über den Node in den Pod-Namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: homeflow
+  labels:
+    app.kubernetes.io/part-of: homeflow
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# DNS ist die einzige clusterweite Ausnahme; ohne sie löst kein Pod Namen auf.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: homeflow
+  labels:
+    app.kubernetes.io/part-of: homeflow
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# Die API darf ausschließlich zur Datenbank sprechen. Kein Internet-Egress:
+# HomeFlow ruft bewusst keine externen Dienste auf (ADR 0005).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-egress-postgres
+  namespace: homeflow
+  labels:
+    app.kubernetes.io/part-of: homeflow
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: homeflow-api
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: homeflow-postgres
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+# Die Datenbank akzeptiert Verbindungen nur von der API. Das ist die
+# wichtigste Regel dieser Datei: sie trennt die Finanz- und Belegdaten von
+# allem anderen im Cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-ingress-api
+  namespace: homeflow
+  labels:
+    app.kubernetes.io/part-of: homeflow
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: homeflow-postgres
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: homeflow-api
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+# Prometheus darf /metrics scrapen — sonst niemand. Der Benutzerzugriff auf
+# die Weboberfläche läuft über `make port-forward` und damit am CNI vorbei;
+# er braucht hier deshalb keine Regel.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-ingress-monitoring
+  namespace: homeflow
+  labels:
+    app.kubernetes.io/part-of: homeflow
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: homeflow-api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: homeflow-monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - { protocol: TCP, port: 8080 }

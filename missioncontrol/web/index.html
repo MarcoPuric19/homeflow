@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mission Control</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🛰</text></svg>" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span>MC</span> Mission Control</div>
+  <nav>
+    <button data-view="cluster" class="active">Cluster</button>
+    <button data-view="board">Board</button>
+    <button data-view="backlog">Backlog</button>
+    <button data-view="repo">Repo</button>
+    <button data-view="deploy">Deploy</button>
+    <button data-view="versions">Versionen</button>
+  </nav>
+  <div class="meta"><span id="mcVersion"></span><span id="stamp">…</span><button id="refresh" class="quiet">Aktualisieren</button></div>
+</header>
+<main>
+  <div id="banner" class="banner" hidden></div>
+
+  <section id="view-cluster">
+    <div class="stats" id="clusterStats"></div>
+    <div class="legend" id="legend"></div>
+    <div id="namespaces"></div>
+
+    <section class="ns log-section">
+      <div class="log-head">
+        <h2>Log</h2>
+        <div class="logbar" id="logControls"></div>
+      </div>
+      <div class="log-query">
+        <input id="logSearch" type="search" placeholder="Volltext … (Enter)" />
+        <div class="levels" id="logLevels"></div>
+        <div class="chips" id="logChips"></div>
+      </div>
+      <div class="histogram" id="logHistogram"></div>
+      <div class="log-body">
+        <aside class="log-fields" id="logFields"></aside>
+        <div class="logs" id="logs"></div>
+      </div>
+    </section>
+  </section>
+
+  <section id="view-board" hidden>
+    <div class="filters" id="boardFilters"></div>
+    <div class="board" id="board"></div>
+  </section>
+
+  <section id="view-backlog" hidden>
+    <div class="ticket-layout">
+      <form id="newTicket" class="card">
+        <h2>Neues Ticket</h2>
+        <label>Projekt<select name="project"></select></label>
+        <label>Typ<select name="type"></select></label>
+        <label>Titel<input name="title" required maxlength="300" placeholder="Kurz und konkret" /></label>
+        <label>Beschreibung<textarea name="body" rows="4" placeholder="Was ist zu tun, was ist der Kontext?"></textarea></label>
+        <div class="split">
+          <label>Priorität<select name="priority"></select></label>
+          <label>Zuständig<select name="owner"><option>offen</option><option>Codex</option><option>Claude Code</option><option>Marco</option></select></label>
+        </div>
+        <div class="split">
+          <label>Version<input name="version" /></label>
+          <label>Komponente<input name="component" placeholder="backend" /></label>
+        </div>
+        <label>Tags<input name="tags" placeholder="deployment, cluster" /></label>
+        <label>Scope (Dateien)<input name="scope" placeholder="backend/internal/pets/, Makefile" /></label>
+        <button class="primary">Ticket anlegen</button>
+      </form>
+      <div class="backlog-side">
+        <div class="filters" id="backlogFilters"></div>
+        <div id="backlogList"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="view-repo" hidden>
+    <div id="repoState"></div>
+  </section>
+
+  <section id="view-deploy" hidden>
+    <div id="deployPanel"></div>
+  </section>
+
+  <section id="view-versions" hidden>
+    <div id="versionGroups"></div>
+  </section>
+
+</main>
+<footer>Läuft lokal auf dem Loopback · keine Anmeldung · unabhängig von HomeFlow versioniert · Austausch.md bleibt bis auf Weiteres verbindlich</footer>
+<script src="app.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS event_outbox;
+DROP TABLE IF EXISTS audit_log;
+DROP TABLE IF EXISTS receipts;
+DROP TABLE IF EXISTS expenses;
+DROP TABLE IF EXISTS calendar_events;
+DROP TABLE IF EXISTS shopping_items;
+DROP TABLE IF EXISTS shopping_lists;
+DROP TABLE IF EXISTS auth_sessions;
+DROP TABLE IF EXISTS users;

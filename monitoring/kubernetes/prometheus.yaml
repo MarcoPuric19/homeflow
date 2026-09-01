@@ -1,0 +1,238 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: prometheus, namespace: homeflow-monitoring }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: homeflow-prometheus }
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: homeflow-prometheus }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: homeflow-prometheus }
+subjects:
+  - { kind: ServiceAccount, name: prometheus, namespace: homeflow-monitoring }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: prometheus-config, namespace: homeflow-monitoring }
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    rule_files:
+      - /etc/prometheus/alerts.yml
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets: ["127.0.0.1:9090"]
+      - job_name: homeflow-api
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["homeflow-api.homeflow.svc.cluster.local:80"]
+      - job_name: kube-state-metrics
+        static_configs:
+          - targets: ["kube-state-metrics.homeflow-monitoring.svc.cluster.local:8080"]
+      - job_name: kubernetes-cadvisor
+        scheme: https
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+  alerts.yml: |
+    groups:
+      - name: homeflow-availability
+        interval: 30s
+        rules:
+          - alert: HomeflowApiDown
+            expr: up{job="homeflow-api"} == 0
+            for: 5m
+            labels: { severity: critical, component: api }
+            annotations:
+              summary: HomeFlow-API antwortet nicht
+              description: >-
+                Prometheus erreicht den Scrape-Endpunkt der API seit 5 Minuten nicht.
+                Die Weboberfläche ist damit vermutlich ebenfalls unerreichbar.
+                Prüfen mit `make status` und `make logs`.
+
+          - alert: HomeflowTargetMissing
+            expr: up == 0
+            for: 10m
+            labels: { severity: warning, component: monitoring }
+            annotations:
+              summary: Scrape-Ziel {{ $labels.job }} ist seit 10 Minuten weg
+              description: >-
+                Ein Monitoring-Ziel liefert keine Metriken mehr. Solange das gilt,
+                sind alle Alarme, die auf diesem Ziel beruhen, blind.
+
+          - alert: HomeflowApiErrorRatio
+            expr: >-
+              sum(rate(homeflow_http_requests_total{status=~"5.."}[5m]))
+              / sum(rate(homeflow_http_requests_total[5m])) > 0.05
+            for: 10m
+            labels: { severity: warning, component: api }
+            annotations:
+              summary: Mehr als 5 Prozent Serverfehler
+              description: >-
+                Der Anteil der 5xx-Antworten liegt seit 10 Minuten über 5 Prozent.
+                Bei zwei Benutzern ist das fast immer ein echter Defekt und kein Lastproblem.
+
+          - alert: HomeflowApiLatency
+            expr: >-
+              histogram_quantile(0.95, sum by (le, route) (
+                rate(homeflow_http_request_duration_seconds_bucket[5m])
+              )) > 1
+            for: 10m
+            labels: { severity: warning, component: api }
+            annotations:
+              summary: Route {{ $labels.route }} ist langsam (p95 über 1s)
+              description: >-
+                Ausgenommen sind erwartbar langsame Pfade nicht: der Login rechnet
+                mit Argon2id bewusst rund 64 MiB pro Prüfung. Anhaltend hohe Werte
+                auf Login-Routen können auf Speicherdruck hindeuten.
+
+      - name: homeflow-database
+        interval: 30s
+        rules:
+          - alert: HomeflowDbPoolSaturated
+            expr: homeflow_db_pool_acquired_connections >= 5
+            for: 5m
+            labels: { severity: warning, component: database }
+            annotations:
+              summary: PostgreSQL-Verbindungspool ausgeschöpft
+              description: >-
+                Alle fünf Verbindungen sind belegt (Obergrenze aus
+                internal/postgres/database.go). Weitere Anfragen warten.
+                Wenn das dauerhaft auftritt, blockiert eine Abfrage oder das Limit
+                passt nicht mehr zur Nutzung.
+
+          - alert: HomeflowDbErrors
+            expr: sum(rate(homeflow_db_query_duration_seconds_count{outcome="error"}[5m])) > 0
+            for: 10m
+            labels: { severity: warning, component: database }
+            annotations:
+              summary: PostgreSQL-Abfragen schlagen fehl
+              description: >-
+                Seit 10 Minuten laufen Abfragen dauerhaft auf Fehler. Verdächtig
+                sind Migrationen, ein voller Datenträger oder eine beendete Datenbank.
+
+          - alert: HomeflowDbSlow
+            expr: >-
+              histogram_quantile(0.95, sum by (le, operation) (
+                rate(homeflow_db_query_duration_seconds_bucket[5m])
+              )) > 0.5
+            for: 15m
+            labels: { severity: info, component: database }
+            annotations:
+              summary: Abfragen vom Typ {{ $labels.operation }} sind langsam
+              description: >-
+                p95 über 500 ms. Bei diesem Datenvolumen ist das unerwartet und
+                deutet eher auf fehlende Indizes oder Speicherdruck hin als auf Last.
+
+      - name: homeflow-security
+        interval: 30s
+        rules:
+          - alert: HomeflowLoginFailureSpike
+            expr: increase(homeflow_login_failures_total[15m]) >= 10
+            for: 0m
+            labels: { severity: warning, component: auth }
+            annotations:
+              summary: Ungewöhnlich viele fehlgeschlagene Anmeldungen
+              description: >-
+                Zehn oder mehr abgelehnte Anmeldungen in 15 Minuten. Das
+                Rate-Limit erlaubt fünf Versuche je IP und Benutzername im selben
+                Zeitraum, der Schwellwert wird also erst durch mehrere Quellen oder
+                mehrere Benutzernamen erreicht. Bei zwei bekannten Benutzern auf
+                einem privaten Netz ist das erklärungsbedürftig.
+
+      - name: homeflow-household
+        interval: 5m
+        rules:
+          - alert: HomeflowExpensesOverdue
+            expr: homeflow_expenses_due > 0
+            for: 6h
+            labels: { severity: info, component: expenses }
+            annotations:
+              summary: "{{ $value }} offene Ausgabe(n) sind fällig"
+              description: >-
+                Mindestens eine geplante oder offene Ausgabe hat ein Fälligkeitsdatum
+                von heute oder früher und ist seit sechs Stunden nicht bezahlt
+                markiert. Fachlicher Hinweis, kein Störungsfall.
+
+          - alert: HomeflowReceiptProcessingSlow
+            expr: >-
+              histogram_quantile(0.95, rate(
+                homeflow_receipt_processing_duration_seconds_bucket[15m]
+              )) > 5
+            for: 15m
+            labels: { severity: info, component: receipts }
+            annotations:
+              summary: Beleg-Uploads dauern ungewöhnlich lange
+              description: >-
+                p95 über 5 Sekunden. Der Upload validiert Magic Bytes, berechnet
+                SHA-256 und schreibt auf das PVC. Anhaltend hohe Werte deuten auf
+                langsamen oder vollen lokalen Speicher hin.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: prometheus-data, namespace: homeflow-monitoring }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: prometheus, namespace: homeflow-monitoring }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: prometheus } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: prometheus, app.kubernetes.io/part-of: homeflow } }
+    spec:
+      serviceAccountName: prometheus
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.13.0-distroless
+          args: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=7d", "--storage.tsdb.retention.size=750MB"]
+          ports: [{ name: http, containerPort: 9090 }]
+          readinessProbe: { httpGet: { path: /-/ready, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /-/healthy, port: http }, periodSeconds: 15 }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 300m, memory: 384Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus, readOnly: true }
+            - { name: data, mountPath: /prometheus }
+      volumes:
+        - { name: config, configMap: { name: prometheus-config } }
+        - { name: data, persistentVolumeClaim: { claimName: prometheus-data } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: prometheus, namespace: homeflow-monitoring }
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: prometheus }
+  ports: [{ name: http, port: 9090, targetPort: http }]

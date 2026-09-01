@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Name=Mission Control
+GenericName=Cockpit und Ticketsystem
+Comment=Pod-Abhaengigkeiten, Logs und Tickets fuer HomeFlow
+Exec=__REPO__/missioncontrol/desktop/launch.sh
+Actions=Kiosk;
+Icon=mission-control
+Terminal=false
+Categories=Development;Monitor;
+Keywords=kubernetes;cluster;tickets;homeflow;
+StartupNotify=true
+StartupWMClass=mission-control
+SingleMainWindow=true
+
+[Desktop Action Kiosk]
+Name=Ohne Browserleisten oeffnen
+Exec=env MC_KIOSK=1 __REPO__/missioncontrol/desktop/launch.sh

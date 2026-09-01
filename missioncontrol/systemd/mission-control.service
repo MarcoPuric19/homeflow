@@ -1,0 +1,35 @@
+# Mission Control als Benutzerdienst - kein System-Dienst, kein root.
+#
+# Installation:  ./install.sh
+# Entfernen:     systemctl --user disable --now mission-control.service
+#                rm ~/.config/systemd/user/mission-control.service
+#
+# Der Dienst braucht die kubeconfig des Benutzers und bindet ausschließlich auf
+# 127.0.0.1. Er hat keine Anmeldung; er darf deshalb nie auf eine andere
+# Adresse gelegt werden.
+[Unit]
+Description=Mission Control - Cockpit und Ticketsystem fuer HomeFlow
+Documentation=file://__REPO__/missioncontrol/README.md
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+ExecStart=__REPO__/missioncontrol/bin/missioncontrol -addr 127.0.0.1:7777 -tickets __REPO__/missioncontrol/tickets -web __REPO__/missioncontrol/web
+Restart=on-failure
+RestartSec=5s
+# Härtung, die in einem *Benutzer*-Dienst tatsächlich greift. Die üblichen
+# Verdächtigen (ProtectKernelTunables, ProtectKernelModules, ProtectControlGroups)
+# verlangen Rechte, die der Benutzer-Manager nicht hat, und lassen den Dienst mit
+# 218/CAPABILITIES sofort sterben - am 2026-09-01 genau so passiert.
+NoNewPrivileges=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+# 128 MiB reichen: der Dienst selbst braucht rund 9 MiB, dazu kommt je Zyklus
+# ein kurzlebiger kubectl-Prozess mit rund 45 MiB, der im selben cgroup läuft.
+MemoryMax=128M
+
+[Install]
+WantedBy=default.target

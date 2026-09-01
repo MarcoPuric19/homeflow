@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homeflow-config
+  namespace: homeflow
+data:
+  HOMEFLOW_ENV: development
+  HOMEFLOW_LISTEN_ADDR: ":8080"
+  HOMEFLOW_RECEIPT_STORAGE: /var/lib/homeflow/receipts
+  HOMEFLOW_COOKIE_SECURE: "false"
+  POSTGRES_DB: homeflow
+  POSTGRES_USER: homeflow

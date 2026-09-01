@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - homeflow-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks: [homeflow]
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    environment:
+      HOMEFLOW_ENV: ${HOMEFLOW_ENV:-development}
+      HOMEFLOW_LISTEN_ADDR: :8080
+      HOMEFLOW_RECEIPT_STORAGE: /var/lib/homeflow/receipts
+      HOMEFLOW_COOKIE_SECURE: "false"
+      HOMEFLOW_DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      HOMEFLOW_USER1_USERNAME: ${HOMEFLOW_USER1_USERNAME:?set HOMEFLOW_USER1_USERNAME in .env}
+      HOMEFLOW_USER1_DISPLAY_NAME: ${HOMEFLOW_USER1_DISPLAY_NAME:?set HOMEFLOW_USER1_DISPLAY_NAME in .env}
+      HOMEFLOW_USER1_PASSWORD: ${HOMEFLOW_USER1_PASSWORD:?set HOMEFLOW_USER1_PASSWORD in .env}
+      HOMEFLOW_USER2_USERNAME: ${HOMEFLOW_USER2_USERNAME:?set HOMEFLOW_USER2_USERNAME in .env}
+      HOMEFLOW_USER2_DISPLAY_NAME: ${HOMEFLOW_USER2_DISPLAY_NAME:?set HOMEFLOW_USER2_DISPLAY_NAME in .env}
+      HOMEFLOW_USER2_PASSWORD: ${HOMEFLOW_USER2_PASSWORD:?set HOMEFLOW_USER2_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:8080:8080"
+    user: "${HOMEFLOW_UID:-1000}:${HOMEFLOW_GID:-1000}"
+    volumes:
+      - ./storage/receipts:/var/lib/homeflow/receipts
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [homeflow]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+networks:
+  homeflow:
+    internal: true
+
+volumes:
+  homeflow-postgres:
