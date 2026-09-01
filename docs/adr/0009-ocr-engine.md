@@ -29,8 +29,39 @@ PDFs (one and two pages, up to 10.7 MP per page) and six phone photos at about
 The image is built from Debian package sources
 (`docker/ocr/Dockerfile`) rather than pulled from a third party: the provenance
 is traceable, and it is the same artefact that would later run as the pod, so
-the benchmark measures what production would do. 77 MB, model included, no
-network at runtime.
+the benchmark measures what production would do. 80 MB, model included, runs as
+uid 65532, verified to work with `--network none`.
+
+Two build targets, and both have to be named explicitly — without `--target`
+Docker builds the last stage, which is the benchmark one:
+
+    docker build --target betrieb   -t homeflow/ocr:1       -f docker/ocr/Dockerfile docker/ocr
+    docker build --target benchmark -t homeflow/ocr-bench:1 -f docker/ocr/Dockerfile docker/ocr
+
+## Licences, checked inside the image rather than from memory
+
+| Component | Licence |
+| --- | --- |
+| tesseract-ocr, libtesseract5 | Apache-2.0 (parts MIT) |
+| tesseract-ocr-deu (tessdata_fast) | **Apache-2.0** |
+| poppler-utils, libpoppler | **GPL-2 / GPL-3** |
+
+Everything is free, no account, no telemetry, no runtime network — confirmed by
+running the engine with `--network none`.
+
+**poppler is the one copyleft component**, and it is used deliberately as a
+separate executable invoked as a subprocess, never linked into a HomeFlow
+binary. Nothing here is distributed: two users, self-hosted, not publicly
+reachable. No obligation is triggered, and it is named here for the same reason
+Grafana's AGPL is named in `../operations/resource-budget.md` — so that the one
+place where "publish this" would mean more than a security problem is written
+down rather than remembered.
+
+GNU time is GPL as well and measures the memory peak. It sits in the benchmark
+stage only: what is not needed in production does not belong in the image. A
+first attempt used a build argument inside the `apt-get` call; it silently did
+not work and the package landed in both images. Two stages are longer and
+verifiable — `test -x /usr/bin/time` answers the question in one line.
 
 ## Measurements
 
