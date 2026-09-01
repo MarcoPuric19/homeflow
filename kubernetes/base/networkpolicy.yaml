@@ -12,9 +12,17 @@
 # `monitoring/kubernetes/networkpolicy.yaml` — inklusive des hier angekündigten
 # Egress zum API-Server für den cAdvisor-Scrape.
 ---
-# Grundregel: alles verboten, was nicht ausdrücklich erlaubt ist.
+# Grundregel für Pod-zu-Pod-Verkehr: alles verboten, was nicht ausdrücklich
+# erlaubt ist.
+#
 # Ausgenommen bleiben Kubelet-Probes und `kubectl port-forward`: beide laufen
 # nicht über den CNI-Datenpfad, sondern über den Node in den Pod-Namespace.
+#
+# Dieselbe Ausnahme gilt auch in der Gegenrichtung, und das stand hier bisher
+# nicht: **Verkehr von einem Pod zum eigenen Knoten wird nicht gefiltert.** Ein
+# Pod, für den nur diese Regel gilt, erreicht den API-Server auf 172.18.0.3:6443
+# und 10.96.0.1:443 trotzdem, einen anderen Pod nicht. Gemessen in HF-0093,
+# Einordnung in `docs/security/threat-model.md`.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

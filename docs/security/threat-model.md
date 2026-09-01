@@ -86,7 +86,10 @@ activity. Before remote access, `/metrics` must be bound to a separate listener,
 restricted by network policy, or placed behind authentication. This is added to
 the gates below.
 
-## Kubernetes network isolation is enforced
+## Kubernetes network isolation is enforced between pods
+
+The heading is deliberately narrower than it used to be. What follows holds for
+pod-to-pod traffic and **not** for traffic from a pod to its own node.
 
 `kubernetes/base/networkpolicy.yaml` declares default-deny for the `homeflow`
 namespace, and on this cluster the declaration is an implemented control: the
@@ -108,6 +111,45 @@ breaks real traffic instead of being harmless, so every change to
 `networkpolicy.yaml` has to be tested, not only rendered. The threat "publicly
 reachable API" above is unaffected either way - it is mitigated by the absence
 of an ingress, not by network policy.
+
+
+### The gap: pod to node is not filtered
+
+Measured on 2026-09-01 in ticket HF-0093. A probe pod covered only by
+`default-deny` and the DNS exception reached both the node address and the API
+server's ClusterIP, while it could not reach another pod:
+
+    172.18.0.3:6443   node IP, API server        REACHABLE
+    10.96.0.1:443     API server ClusterIP       REACHABLE
+    10.244.0.18:9090  another pod (Prometheus)   blocked
+
+Counter-check: deleting `monitoring-egress-apiserver` entirely left the cAdvisor
+scrape working. The rule permits something that was never denied.
+
+`kube-network-policies` filters the pod-to-pod datapath. Destinations in the
+host network of the pod's own node bypass it — the same exemption that lets
+`kubectl port-forward` and the kubelet probes work in the opposite direction,
+which `kubernetes/base/networkpolicy.yaml` already documents for that direction
+only.
+
+**Consequence: every pod on this cluster can reach the kube-apiserver,
+regardless of what any NetworkPolicy says.** What that is worth is limited but
+not nothing. The HomeFlow pods run with `automountServiceAccountToken: false`,
+so there is no token to use the open path with; Prometheus and
+kube-state-metrics do carry tokens, but they need API access anyway and their
+RBAC is already restricted to read-only object state. The point is not an acute
+danger. The point is that this document promised something the environment does
+not hold, and an egress rule was being read as a control when it is a statement
+of intent.
+
+Egress to the internet **is** filtered: Grafana could not reach `grafana.com`
+once the policies were applied (HF-0088). The exemption appears to be
+node-local only; that distinction was not investigated further.
+
+Closing the gap needs a CNI that enforces it — Calico or Cilium, both free,
+both replacing kindnetd and both costing memory this machine does not have
+spare. That is a decision for Marco, not a side effect of a ticket.
+
 
 ## OCR processing controls (epic HF-0072, not yet built)
 
