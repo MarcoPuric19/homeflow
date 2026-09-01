@@ -75,7 +75,10 @@ spec:
             periodSeconds: 15
             timeoutSeconds: 5
           resources:
-            requests: { cpu: 10m, memory: 32Mi }
+            # 32 MiB angefordert, 63 MiB gemessen (HF-0086). Ein Request unter dem echten
+            # Verbrauch schiebt den Pod auf der Kill-Liste des
+            # Host-Kernels nach vorn.
+            requests: { cpu: 10m, memory: 64Mi }
             limits: { cpu: 100m, memory: 128Mi }
           securityContext:
             allowPrivilegeEscalation: false

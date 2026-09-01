@@ -1,0 +1,55 @@
+# Clusterkonfiguration für kind-dev
+#
+# Diese Datei hat bis HF-0090 gefehlt: der Cluster wurde einmal von Hand mit
+# `kind create cluster --name dev` angelegt und war aus dem Repo nicht
+# reproduzierbar. Damit fehlte auch der einzige Ort, an dem man dem kubelet
+# sagen kann, dass der Laptop noch andere Aufgaben hat.
+#
+# Anlegen mit:
+#     kind create cluster --config kubernetes/kind-cluster.yaml
+#
+# ACHTUNG: die Datei wirkt erst beim nächsten Aufbau des Clusters. Der laufende
+# kind-dev hat sie nicht - dort sind `allocatable` und `capacity` weiterhin
+# gleich und die Speicher-Eviction aus.
+apiVersion: kind.x-k8s.io/v1alpha4
+kind: Cluster
+name: dev
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      # Ohne diese Angaben meldet der Knoten allocatable = capacity = 7285 MiB
+      # und der Scheduler hält den ganzen Laptop für frei. Er ist es nicht:
+      # Desktop, Browser, IDE, der Docker-Daemon und die Go- und
+      # npm-Toolchains liegen daneben und sind für Kubernetes unsichtbar.
+      #
+      # Am 2026-09-01 hat genau das sechs Container in acht Minuten über fünf
+      # Namespaces zerlegt - ein Speicherereignis des Hosts, nicht sechs zu
+      # enge Limits (HF-0086 Befund 3).
+      #
+      # Die Rechnung, mit der diese Zahlen entstanden sind:
+      #     Host gesamt                          7285 MiB
+      #   − systemReserved                       3072 MiB  (Desktop, Browser, IDE, Toolchain)
+      #   − kubeReserved                          512 MiB  (kubelet, containerd)
+      #   − evictionHard.memory.available         256 MiB  (Puffer, bevor evictiert wird)
+      #   = allocatable                        ≈ 3445 MiB  gegen 1408 MiB Pod-Spitze heute
+      #
+      # `systemReserved` ist die Zahl, an der man drehen wird: zu niedrig, und
+      # der Scheduler überbucht weiter; zu hoch, und für den OCR-Pod (HF-0076)
+      # oder einen zweiten Cluster (MC-0004) ist kein Platz. Sie ist ein Budget
+      # im Sinne von contracts.md Abschnitt 2 und gehört Marco, nicht dem
+      # nächsten Assistenten.
+      - |
+        kind: KubeletConfiguration
+        systemReserved:
+          memory: "3072Mi"
+        kubeReserved:
+          memory: "512Mi"
+        # kind schaltet die Platten-Schwellen bewusst ab, weil der Container
+        # das Dateisystem des Hosts sieht und sonst dauernd evictieren würde.
+        # Sie werden hier ausdrücklich wiederholt, damit der Patch sie nicht
+        # verliert und die Vorgaben zurückkommen.
+        evictionHard:
+          memory.available: "256Mi"
+          nodefs.available: "0%"
+          nodefs.inodesFree: "0%"
+          imagefs.available: "0%"

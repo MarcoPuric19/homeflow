@@ -57,10 +57,29 @@ spec:
   resources: { requests: { storage: 1Gi } }
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata: { name: grafana, namespace: homeflow-monitoring }
 spec:
   replicas: 1
+  # StatefulSet statt Deployment, weil hier genau ein Prozess mit exklusivem
+  # Schreibschloss auf ein ReadWriteOnce-Volume schreibt. Ein Deployment startet
+  # den Ersatz-Pod, bevor der alte weg ist; der neue scheitert dann am Schloss
+  # und landet in CrashLoopBackOff, während der alte weiterbedient - genau so
+  # passiert beim ersten Update dieses Deployments überhaupt (HF-0090).
+  #
+  # `strategy: Recreate` hat das behoben und das Muster stehen lassen. Der
+  # Objekttyp garantiert dasselbe, ohne dass jemand an ein Feld denken muss, und
+  # postgres im selben Repo ist bereits ein StatefulSet. Zwei Muster für
+  # dasselbe Problem sind der eigentliche Fehler (HF-0092).
+  #
+  # Kein volumeClaimTemplates: das legt PVCs unter neuen Namen an und ließe die
+  # vorhandenen Daten liegen. Der bestehende Anspruch `grafana-data` wird
+  # weiter als gewöhnliches Volume eingebunden.
+  #
+  # `serviceName` zeigt auf den vorhandenen ClusterIP-Service. Er steuert nur
+  # die DNS-Namen einzelner Pods, die hier niemand adressiert; ein zusätzlicher
+  # headless Service wäre Zeremonie ohne Nutzen.
+  serviceName: grafana
   selector: { matchLabels: { app.kubernetes.io/name: grafana } }
   template:
     metadata: { labels: { app.kubernetes.io/name: grafana, app.kubernetes.io/part-of: homeflow } }
@@ -75,6 +94,14 @@ spec:
       containers:
         - name: grafana
           image: grafana/grafana:13.2.0
+          # Der Service verweist mit targetPort: http auf einen benannten Port,
+          # den der Container nie deklariert hat. Ergebnis: ein EndpointSlice
+          # mit Adresse und ohne Port, und jede Verbindung über den Service
+          # endet in "connection refused". Aufgefallen ist es erst, als in
+          # HF-0092 zum ersten Mal etwas anderes als ein Port-Forward auf
+          # Grafana zugegriffen hat - der geht am Service vorbei und hat den
+          # Fehler die ganze Zeit verdeckt.
+          ports: [{ name: http, containerPort: 3000 }]
           env:
             - { name: GF_SECURITY_ADMIN_USER, value: admin }
             - name: GF_SECURITY_ADMIN_PASSWORD
@@ -85,15 +112,28 @@ spec:
             - { name: GF_ANALYTICS_CHECK_FOR_UPDATES, value: "false" }
             - { name: GF_NEWS_NEWS_FEED_ENABLED, value: "false" }
             - { name: GF_PLUGINS_PLUGIN_ADMIN_ENABLED, value: "false" }
-          ports: [{ name: http, containerPort: 3000 }]
-          startupProbe:
-            httpGet: { path: /api/health, port: http }
-            periodSeconds: 5
-            failureThreshold: 36
-          readinessProbe: { httpGet: { path: /api/health, port: http }, periodSeconds: 5 }
-          livenessProbe: { httpGet: { path: /api/health, port: http }, periodSeconds: 15 }
+            # Der Hintergrund-Installer versucht beim Start, Plugins von
+            # grafana.com nachzuladen - die beiden Schalter darüber decken
+            # diesen Pfad nicht ab (HF-0088). Die NetworkPolicy blockt es
+            # ohnehin; hier wird der Versuch abgestellt, nicht nur der Erfolg.
+            - { name: GF_PLUGINS_PREINSTALL_DISABLED, value: "true" }
+            # Grafana startet je gebündelter Datenquelle einen eigenen
+            # Plugin-Prozess. 13 liefen, gebraucht wird einer. Gemessen an zwei
+            # isolierten Containern desselben Images: 229,2 MiB mit allen,
+            # 170,1 MiB nur mit Prometheus - 59 MiB für nichts (HF-0086).
+            #
+            # `disable_plugins` deckt laut mitgelieferter defaults.ini
+            # ausdrücklich auch Kern-Plugins ab. Kommt eine Datenquelle dazu,
+            # muss sie hier heraus, sonst fehlt sie kommentarlos.
+            - name: GF_PLUGINS_DISABLE_PLUGINS
+              value: "grafana-testdata-datasource,alertmanager,cloudwatch,elasticsearch,grafana-postgresql-datasource,grafana-pyroscope-datasource,influxdb,jaeger,loki,mssql,mysql,opentsdb,tempo,zipkin,graphite,grafana-azure-monitor-datasource,stackdriver"
           resources:
-            requests: { cpu: 20m, memory: 64Mi }
+            # Der Request ist auf diesem Cluster kein Scheduling-Detail: er
+            # bestimmt oom_score_adj und damit, wen der Host-Kernel zuerst
+            # killt, weil kubelet-Eviction hier ganz abgeschaltet ist
+            # (HF-0086 Befund 2 und 3). 64 MiB gegen 170 MiB Verbrauch hieß:
+            # weit vorn in der Reihe.
+            requests: { cpu: 20m, memory: 160Mi }
             limits: { cpu: 200m, memory: 256Mi }
           securityContext:
             allowPrivilegeEscalation: false

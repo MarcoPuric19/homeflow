@@ -40,6 +40,34 @@ spec:
       containers:
         - name: postgres
           image: postgres:17-alpine
+          # Ohne diese Zeilen gelten die Image-Vorgaben, und die passen nicht zu
+          # dem, was hier läuft (HF-0086 Befund 4): max_connections 100 gegen
+          # einen Pool von 5, effective_cache_size 4 GiB auf einem 7-GiB-Laptop,
+          # der davon rund 2 GiB frei hat. Das ist keine Reserve, sondern eine
+          # Zusage, die das 384-MiB-Limit nicht halten kann - bei 2 bis 5 MiB je
+          # Backend wären 100 Verbindungen 200 bis 500 MiB, bevor überhaupt ein
+          # Puffer steht.
+          #
+          # Wer eine dieser Zahlen ändert, ändert sie zusammen mit dem Limit
+          # darunter und mit contracts.md Abschnitt 2.
+          args:
+            - postgres
+            # Pool 5 (backend/internal/postgres/database.go) + 3 reservierte
+            # Superuser-Verbindungen + Sicherung, Migration und ein zweiter
+            # Prozess, der kurz danebensteht. Nicht 100.
+            - -c
+            - max_connections=20
+            # Ein Viertel des Container-Limits, die übliche Faustregel.
+            - -c
+            - shared_buffers=96MB
+            # Was der Container realistisch als Cache sieht, nicht was auf der
+            # Maschine insgesamt steht.
+            - -c
+            - effective_cache_size=192MB
+            # Greift bei VACUUM und Indexaufbau. 64 MiB Vorgabe wären ein Sechstel
+            # des Limits für eine Datenbank dieser Größe.
+            - -c
+            - maintenance_work_mem=32MB
           ports:
             - name: postgres
               containerPort: 5432

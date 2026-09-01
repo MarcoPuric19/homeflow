@@ -38,6 +38,12 @@ data:
       - job_name: kube-state-metrics
         static_configs:
           - targets: ["kube-state-metrics.homeflow-monitoring.svc.cluster.local:8080"]
+      # Grafana wird nicht wegen seiner eigenen Kennzahlen gescrapt, sondern
+      # wegen grafana_plugin_build_info: nur damit ist die Plugin-Denylist aus
+      # HF-0090 beobachtbar statt kommentiert (HF-0092).
+      - job_name: grafana
+        static_configs:
+          - targets: ["grafana.homeflow-monitoring.svc.cluster.local:3000"]
       - job_name: kubernetes-cadvisor
         scheme: https
         bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
@@ -184,6 +190,101 @@ data:
                 p95 über 5 Sekunden. Der Upload validiert Magic Bytes, berechnet
                 SHA-256 und schreibt auf das PVC. Anhaltend hohe Werte deuten auf
                 langsamen oder vollen lokalen Speicher hin.
+      - name: homeflow-ressourcen
+        interval: 60s
+        rules:
+          # Bis HF-0092 gab es keinen einzigen Alarm auf Speicherauslastung.
+          # Grafana lief auf 97 % seines Limits, ohne dass irgendetwas
+          # fehlschlug - aufgefallen ist es erst, als in HF-0086 jemand
+          # nachgemessen hat. Ein Container, der sein Limit erreicht, wird vom
+          # Kernel getötet, nicht langsamer: es gibt keine Vorwarnung außer
+          # dieser hier.
+          #
+          # working_set ist das Maß, an dem sich der OOM-Kill entscheidet, und
+          # das Limit kommt aus kube-state-metrics statt aus einer im Alarm
+          # wiederholten Zahl - sonst driften Regel und Manifest auseinander,
+          # ohne dass etwas bricht.
+          - alert: HomeflowContainerMemoryNearLimit
+            expr: >-
+              max by (namespace, container) (
+                container_memory_working_set_bytes{container!=""}
+              ) / on (namespace, container) group_left max by (namespace, container) (
+                kube_pod_container_resource_limits{resource="memory"}
+              ) > 0.85
+            for: 10m
+            labels: { severity: warning, component: ressourcen }
+            annotations:
+              summary: "{{ $labels.container }} nähert sich seinem Speicherlimit"
+              description: >-
+                {{ $labels.namespace }}/{{ $labels.container }} liegt seit
+                10 Minuten über 85 % seines Limits ({{ $value | humanizePercentage }}).
+                Oberhalb davon killt der Kernel den Container, statt ihn zu
+                bremsen. Messwerte und Optionen je Komponente stehen in
+                docs/operations/resource-budget.md.
+          # Diese Regel wurde zuerst geschrieben, um das OOM-Ereignis vom
+          # 2026-09-01 zu erwischen - und kann das nicht. Gegen die Historie
+          # geprüft: um 14:40 UTC, mitten im Ereignis, stand die Summe bei
+          # 14,4 %. Der Druck kam von außerhalb des Clusters (Browser, IDE,
+          # Go- und npm-Toolchain), und davon sieht cAdvisor nichts.
+          #
+          # Von innen ist der Speicherdruck des Hosts nicht beobachtbar. Dafür
+          # bräuchte es einen node_exporter auf dem Laptop selbst - eine neue
+          # Dauerkomponente und damit Marcos Entscheidung (HF-0092).
+          #
+          # Was die Regel wirklich meldet, ist enger und trotzdem nützlich: der
+          # Cluster selbst wächst über sein Maß. Heute liegt er bei 14 %; mit
+          # den Reservierungen aus kubernetes/kind-cluster.yaml wären rund 47 %
+          # das rechnerische Maximum. 60 % heißt also "der Cluster hat seinen
+          # Fußabdruck vervierfacht", und das ist ein Signal.
+          - alert: HomeflowClusterFootprintGrown
+            expr: >-
+              sum(container_memory_working_set_bytes{container!=""})
+              / on() (machine_memory_bytes) > 0.6
+            for: 15m
+            labels: { severity: warning, component: ressourcen }
+            annotations:
+              summary: Der Cluster belegt mehr als 60 % des Laptops
+              description: >-
+                Alle Container zusammen liegen seit 15 Minuten über 60 % des
+                Arbeitsspeichers ({{ $value | humanizePercentage }}), normal
+                sind rund 14 %. Achtung: das misst nur den Cluster. Was Browser,
+                IDE und Toolchain daneben belegen, sieht diese Regel nicht -
+                der Host kann voll sein, während sie ruhig bleibt.
+          # Ein Container ohne Limit kann den Knoten allein leerräumen und ist
+          # BestEffort, steht also mit oom_score_adj 1000 ganz vorn. Gilt
+          # absichtlich nur für die eigenen Namespaces: kube-system wird von
+          # kubeadm verwaltet und ist über kubernetes/base nicht erreichbar.
+          - alert: HomeflowContainerWithoutMemoryLimit
+            expr: >-
+              count by (namespace, container) (
+                container_memory_working_set_bytes{container!="", namespace=~"homeflow.*"}
+              ) unless on (namespace, container) (
+                kube_pod_container_resource_limits{resource="memory"}
+              )
+            for: 30m
+            labels: { severity: info, component: ressourcen }
+            annotations:
+              summary: "{{ $labels.container }} läuft ohne Speicherlimit"
+              description: >-
+                {{ $labels.namespace }}/{{ $labels.container }} hat kein
+                Speicherlimit und ist damit BestEffort - der Host-Kernel tötet
+                ihn zuerst. Limit setzen und contracts.md Abschnitt 2 mitziehen.
+          # Grafana startet je gebündelter Datenquelle einen eigenen Prozess.
+          # 13 liefen, gebraucht wird einer; abgeschaltet sind sie über eine
+          # Denylist mit 17 fest verdrahteten IDs (HF-0090). Bündelt eine
+          # künftige Grafana-Version eine neue Datenquelle, steht sie nicht auf
+          # der Liste und kommt still zurück. Diese Regel macht daraus ein
+          # Signal statt eines Kommentars.
+          - alert: GrafanaUnexpectedDatasourcePlugin
+            expr: count(grafana_plugin_build_info{plugin_type="datasource"}) > 1
+            for: 15m
+            labels: { severity: info, component: monitoring }
+            annotations:
+              summary: Grafana lädt mehr Datenquellen-Plugins als die eine erwartete
+              description: >-
+                Erwartet ist genau `prometheus`. Jedes weitere Plugin ist ein
+                eigener Prozess und kostet Speicher. GF_PLUGINS_DISABLE_PLUGINS
+                in monitoring/kubernetes/grafana.yaml ergänzen.
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -193,10 +294,29 @@ spec:
   resources: { requests: { storage: 1Gi } }
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata: { name: prometheus, namespace: homeflow-monitoring }
 spec:
   replicas: 1
+  # StatefulSet statt Deployment, weil hier genau ein Prozess mit exklusivem
+  # Schreibschloss auf ein ReadWriteOnce-Volume schreibt. Ein Deployment startet
+  # den Ersatz-Pod, bevor der alte weg ist; der neue scheitert dann am Schloss
+  # und landet in CrashLoopBackOff, während der alte weiterbedient - genau so
+  # passiert beim ersten Update dieses Deployments überhaupt (HF-0090).
+  #
+  # `strategy: Recreate` hat das behoben und das Muster stehen lassen. Der
+  # Objekttyp garantiert dasselbe, ohne dass jemand an ein Feld denken muss, und
+  # postgres im selben Repo ist bereits ein StatefulSet. Zwei Muster für
+  # dasselbe Problem sind der eigentliche Fehler (HF-0092).
+  #
+  # Kein volumeClaimTemplates: das legt PVCs unter neuen Namen an und ließe die
+  # vorhandenen Daten liegen. Der bestehende Anspruch `prometheus-data` wird
+  # weiter als gewöhnliches Volume eingebunden.
+  #
+  # `serviceName` zeigt auf den vorhandenen ClusterIP-Service. Er steuert nur
+  # die DNS-Namen einzelner Pods, die hier niemand adressiert; ein zusätzlicher
+  # headless Service wäre Zeremonie ohne Nutzen.
+  serviceName: prometheus
   selector: { matchLabels: { app.kubernetes.io/name: prometheus } }
   template:
     metadata: { labels: { app.kubernetes.io/name: prometheus, app.kubernetes.io/part-of: homeflow } }
@@ -216,7 +336,10 @@ spec:
           readinessProbe: { httpGet: { path: /-/ready, port: http }, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /-/healthy, port: http }, periodSeconds: 15 }
           resources:
-            requests: { cpu: 50m, memory: 128Mi }
+            # 128 MiB angefordert, 133 MiB gemessen (HF-0086). Ein Request unter dem echten
+            # Verbrauch schiebt den Pod auf der Kill-Liste des
+            # Host-Kernels nach vorn.
+            requests: { cpu: 50m, memory: 160Mi }
             limits: { cpu: 300m, memory: 384Mi }
           securityContext:
             allowPrivilegeEscalation: false

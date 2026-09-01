@@ -3,5 +3,6 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - prometheus.yaml
+  - networkpolicy.yaml
   - kube-state-metrics.yaml
   - grafana.yaml

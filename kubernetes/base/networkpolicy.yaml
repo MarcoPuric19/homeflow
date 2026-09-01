@@ -8,10 +8,9 @@
 # Konsequenz: ein falscher Selektor bricht echten Verkehr, statt folgenlos zu
 # bleiben. Jede Änderung hier wird getestet, nicht nur gerendert.
 #
-# Nicht abgedeckt: Namespace homeflow-monitoring. Prometheus braucht Egress
-# zum Kubernetes-API-Server (cAdvisor-Scrape über den Node-Proxy). Diese Regel
-# wird geschrieben, sobald der Monitoring-Stack auf diesem Cluster wirklich
-# läuft — dann ist sie testbar statt geraten.
+# Der Namespace homeflow-monitoring hat seit HF-0088 eigene Regeln in
+# `monitoring/kubernetes/networkpolicy.yaml` — inklusive des hier angekündigten
+# Egress zum API-Server für den cAdvisor-Scrape.
 ---
 # Grundregel: alles verboten, was nicht ausdrücklich erlaubt ist.
 # Ausgenommen bleiben Kubelet-Probes und `kubectl port-forward`: beide laufen
