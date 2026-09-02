@@ -538,7 +538,10 @@ function filterBar(target, onChange) {
   search.addEventListener("input", () => { filters.suche = search.value; onChange(); });
 
   bar.append(search,
-    select("Alle Projekte", "projekt", META.projekte.map((p) => p.key)),
+      // Kein "Alle Projekte"-Feld: das Projekt kommt aus den Reitern oben und
+      // gilt fuer jede Ansicht. Zwei Mechanismen fuer dieselbe Auswahl haben
+      // dazu gefuehrt, dass der Backlog beide Projekte mischte, waehrend das
+      // Board schon getrennt war (MC-0021).
     select("Alle Typen", "typ", META.typen),
     select("Alle Zuständigen", "zustaendig", owners),
     select("Alle Versionen", "version", versions));
