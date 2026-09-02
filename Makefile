@@ -197,6 +197,9 @@ check-migrations: ## Check migration numbering against contracts.md 1.3 (no data
 public-export: ## Build the derived public clone into a timestamped directory (never pushes)
 	@./scripts/public-export.sh "$${PUBLIC_EXPORT_DIR:-$${TMPDIR:-/tmp}/homeflow-public-$$(date +%Y%m%d-%H%M%S)}"
 
+rollback: ## Roll a pipeline back to a commit from the deploy journal (ROLLBACK_DRY_RUN=1 to rehearse)
+	@./scripts/rollback.sh $(PIPELINE) $(COMMIT)
+
 check-publication: ## Audit the history before publishing (secrets, redactions, excluded paths)
 	@./scripts/check-publication.sh
 
