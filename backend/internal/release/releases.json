@@ -1,3 +1,18 @@
 {
-  "releases": []
+  "releases": [
+    {
+      "version": "0.15.11",
+      "zeit": "2026-09-02T09:00:57.800867185Z",
+      "commit": "fa3fd1089174922f71998381dd53c127555b3ffa",
+      "von": "Marco",
+      "tickets": [
+        {
+          "key": "HF-0105",
+          "titel": "F5/9 Release-Notizen aus Tickets und Commits",
+          "typ": "Task",
+          "komponente": "deploy"
+        }
+      ]
+    }
+  ]
 }
