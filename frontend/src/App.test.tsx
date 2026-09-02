@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { Calendar, EventRow, ExpenseRow, Pets, groupByDay } from "./App";
+import { Calendar, EventRow, ExpenseRow, Pets } from "./App";
+import { Expenses, Shopping, groupByDay } from "./pages/LegacyPages";
 import type { CalendarEvent, Expense, Pet } from "./api";
 
 const expense = (overrides: Partial<Expense> = {}): Expense => ({
@@ -124,6 +125,30 @@ describe("Calendar", () => {
     const html = renderCalendar([]);
     expect(html).toContain('type="datetime-local"');
     expect(html).toContain("Nur für mich");
+  });
+
+  it("requires a pet and offers no generic appointment", () => {
+    const html = renderCalendar([]);
+    expect(html).toContain('name="petId"');
+    expect(html).toContain("Tier auswählen");
+    expect(html).not.toContain("Kein Tierbezug");
+  });
+});
+
+describe("pet-scoped forms", () => {
+  const pet: Pet = { id: "p1", name: "Momo", species: "Katze", approximateBirthDate: false, sex: "female", active: true, createdAt: "2026-09-01T00:00:00Z", updatedAt: "2026-09-01T00:00:00Z" };
+
+  it("requires an expense to select a pet", () => {
+    const html = renderToStaticMarkup(<Expenses items={[]} summary={null} pets={[pet]} events={[]} month="2026-09" setMonth={() => {}} busy={false} run={async () => {}} />);
+    expect(html).toContain("Tier auswählen");
+    expect(html).not.toContain("Kein Tierbezug");
+  });
+
+  it("makes all pets an explicit shopping choice", () => {
+    const html = renderToStaticMarkup(<Shopping items={[]} lists={[{ id: "l1", name: "Tierbedarf", visibility: "shared" }]} pets={[pet]} busy={false} run={async () => {}} />);
+    expect(html).toContain("Für welche Tiere?");
+    expect(html).toContain("Alle Tiere");
+    expect(html).not.toContain("Für Tiere (optional)");
   });
 });
 

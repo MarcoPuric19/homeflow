@@ -84,8 +84,8 @@ export const petDocumentContentPath = (petId: string, documentId: string) =>
   `/api/v1/pets/${encodeURIComponent(petId)}/documents/${encodeURIComponent(documentId)}/content`;
 
 export type ShoppingList = { id:string;name:string;visibility:"shared"|"private" };
-export type ShoppingItem = { id: string; name: string; quantity: string; unit?: string; category?: string; priority: string; completed: boolean; petIds:string[];preferredBrand?:string;estimatedPriceCents?:number;estimatedPriceCurrency:string;recurring:boolean };
-export type ShoppingInput = { listId: string; name: string; quantity: string; unit: string; category: string; note: string; priority: string; store: string; petIds:string[];preferredBrand:string;estimatedPriceCents?:number;estimatedPriceCurrency:string;recurring:boolean };
+export type ShoppingItem = { id: string; name: string; quantity: string; unit?: string; category?: string; priority: string; completed: boolean; petIds:string[];forAllPets:boolean;preferredBrand?:string;estimatedPriceCents?:number;estimatedPriceCurrency:string;recurring:boolean };
+export type ShoppingInput = { listId: string; name: string; quantity: string; unit: string; category: string; note: string; priority: string; store: string; petIds:string[];forAllPets:boolean;preferredBrand:string;estimatedPriceCents?:number;estimatedPriceCurrency:string;recurring:boolean };
 export type Expense = { id: string; description: string; merchant?: string; plannedAmountCents: number; actualAmountCents?: number; currency: string; dueDate: string; category?: string; status: string; petId?: string; budgetCategory?: string };
 export type ExpenseInput = { description: string; merchant: string; plannedAmountCents: number; currency: string; dueDate: string; category: string; recurrenceRule: string; status: string; paymentMethod: string; notes: string; petId?: string; budgetCategory?: string };
 export type Receipt = { id: string; expenseId: string; originalFilename: string; mimeType: string; sha256: string; uploadedAt: string; merchant?: string; totalAmountCents?: number; currency: string };
