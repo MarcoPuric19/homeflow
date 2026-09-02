@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"missioncontrol/internal/deploy"
+	"missioncontrol/internal/release"
 	"missioncontrol/internal/repo"
 	"missioncontrol/internal/tickets"
 )
@@ -354,4 +356,57 @@ func (s *Server) deploymentState() []map[string]any {
 		out = append(out, entry)
 	}
 	return out
+}
+
+// releaseNotesPath is where HomeFlow looks for its own history. Die Datei liegt
+// unter backend/, weil go:embed nicht aus dem Modul heraus greifen kann - und
+// sie soll ins Image, nicht daneben.
+const releaseNotesPath = "backend/internal/release/releases.json"
+
+// beforeDeploy schreibt die Zusammenfassung, bevor gebaut wird.
+//
+// Die Reihenfolge ist der ganze Punkt: make docker-build backt backend/ ins
+// Image. Wer die Notiz danach schreibt, liefert ein Image aus, das seine eigene
+// Release nicht kennt (HF-0105).
+func (s *Server) beforeDeploy(run deploy.Run) error {
+	// Nur HomeFlow trägt seine Release-Historie im Image. Mission Control kennt
+	// seine Version aus dem Binary, und der Prüflauf liefert gar nichts aus.
+	if run.Pipeline != "homeflow" || run.Version == "" {
+		return nil
+	}
+	pfad := filepath.Join(s.config.RepoRoot, releaseNotesPath)
+	datei, err := release.Load(pfad)
+	if err != nil {
+		return err
+	}
+
+	eintrag := release.Entry{
+		Version: run.Version, At: time.Now().UTC(),
+		By: run.StartedBy, Commit: s.headCommit(),
+		Tickets: make([]release.Item, 0, len(run.Tickets)),
+	}
+	for _, key := range run.Tickets {
+		ticket, err := s.store.Get(key)
+		if err != nil {
+			// Ein Ticket, das gerade nicht lesbar ist, darf den Deploy nicht
+			// aufhalten - aber es fehlt dann auch in der Notiz, und das ist
+			// besser als ein erfundener Titel.
+			s.logger.Warn("Ticket für die Release-Notiz nicht lesbar", "ticket", key, "error", err)
+			continue
+		}
+		eintrag.Tickets = append(eintrag.Tickets, release.Item{
+			Key: ticket.Key, Title: ticket.Title, Type: ticket.Type, Component: ticket.Component,
+		})
+	}
+
+	datei.Record(eintrag)
+	if err := release.Save(pfad, datei); err != nil {
+		return err
+	}
+	// Zusätzlich lesbar, weil eine Release-Notiz auch ohne Werkzeug taugen soll.
+	lesbar := filepath.Join(s.config.RepoRoot, "docs", "releases", run.Version+".md")
+	if err := os.MkdirAll(filepath.Dir(lesbar), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(lesbar, []byte(release.Markdown(eintrag)), 0o644)
 }

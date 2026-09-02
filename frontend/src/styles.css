@@ -32,3 +32,7 @@ main { width:min(1180px, calc(100% - 36px)); margin:0 auto; padding:48px 0; }
 
 @media (max-width:767px){
   body{padding-bottom:74px;overflow-x:hidden}.shell{display:block}.app-sidebar{height:74px;position:fixed;inset:auto 0 0;padding:6px 8px max(6px,env(safe-area-inset-bottom));border:0;border-top:1px solid var(--line);display:block}.app-sidebar>.brand,.app-sidebar>.logout{display:none}.app-nav{height:100%;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1px}.app-nav button{min-width:0;min-height:44px;display:flex;flex-direction:column;justify-content:center;gap:1px;padding:3px 1px;border-radius:8px}.app-nav button>span{font-size:18px;line-height:1}.app-nav button>b{font-size:10px;white-space:nowrap}.app-main{width:min(100% - 28px,1180px);padding:28px 0}.hero{align-items:start;gap:12px}.hero h1{font-size:clamp(34px,11vw,48px)}.reminder-card li{flex-direction:column}.medical-list li{grid-template-columns:1fr}.expense-main,.event-main,.pet-head{min-width:0}.expense-main>div,.event-main>div,.pet-head>div{min-width:0;overflow-wrap:anywhere}}
+.version-note{margin:0 0 1rem;padding:.8rem 1rem;border:1px solid var(--line,#333);border-left:3px solid var(--ok,#2e7d52);border-radius:6px}
+.version-note h2{margin:0 0 .4rem;font-size:1rem}
+.version-note ul{margin:.3rem 0 .6rem;padding-left:1.2rem;line-height:1.5}
+.version-note li{margin:.15rem 0}

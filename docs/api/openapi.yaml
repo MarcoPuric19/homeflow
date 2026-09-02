@@ -130,6 +130,18 @@ paths:
       responses:
         "204": { description: Browser session revoked and cookies cleared }
         "403": { description: CSRF token missing or invalid }
+  /api/v1/version:
+    get:
+      summary: Welche Version laeuft und was steckt in ihr
+      description: >-
+        Hinter der Anmeldung, weil die Notizen Ticketnamen tragen. Fehlt eine
+        Notiz zur laufenden Version, wurde gebaut aber nicht ueber die Pipeline
+        ausgeliefert - der Hinweis sagt das (HF-0105).
+      responses:
+        "200":
+          description: Version und Release-Historie
+        "401":
+          description: Nicht angemeldet
   /api/v1/shopping/items:
     get:
       tags: [Shopping]

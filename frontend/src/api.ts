@@ -24,7 +24,12 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
   return response.json() as Promise<T>;
 }
 
+export type ReleaseTicket = { key: string; titel: string; komponente?: string };
+export type Release = { version: string; zeit: string; von?: string; commit?: string; tickets: ReleaseTicket[] };
+export type VersionInfo = { version: string; releases: Release[]; aktuell?: Release; hinweis?: string };
+
 export const api = {
+  version: () => request<VersionInfo>("/api/v1/version"),
   login: (username: string, password: string) => request<{ username: string }>("/api/v1/auth/browser/login", { method: "POST", body: JSON.stringify({ username, password }) }, false),
   logout: () => request<void>("/api/v1/auth/browser/logout", { method: "POST" }, false),
   shopping: () => request<{ items: ShoppingItem[] }>("/api/v1/shopping/items?includeCompleted=true"),

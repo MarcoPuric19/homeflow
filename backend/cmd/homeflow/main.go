@@ -26,6 +26,12 @@ import (
 	"homeflow/backend/internal/vets"
 )
 
+// version wird beim Bauen über -ldflags gesetzt (siehe docker/Dockerfile und
+// die Makefile). Ohne sie steht hier "unbekannt" statt einer erfundenen Nummer -
+// und genau das ist ein brauchbarer Hinweis: es heißt, dass jemand von Hand
+// gebaut hat und nicht über die Pipeline (HF-0105).
+var version = "unbekannt"
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(logger); err != nil {
@@ -33,6 +39,8 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+func init() { httpapi.Version = version }
 
 func run(logger *slog.Logger) error {
 	environment := env("HOMEFLOW_ENV", "development")

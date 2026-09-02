@@ -63,6 +63,10 @@ type Runner struct {
 	OnFinish func(Run)
 	// ProcessStarted is when this cockpit process began.
 	ProcessStarted time.Time
+	// OnStart runs before the first step and can refuse the run. Es gibt genau
+	// einen Grund dafür: die Release-Zusammenfassung muss geschrieben sein,
+	// BEVOR das Image gebaut wird, sonst enthält das Image sie nicht (HF-0105).
+	OnStart func(Run) error
 	// Journal remembers what each pipeline actually shipped, across restarts.
 	// Without it the change detection compared the built binary against this
 	// process, so restarting the cockpit to verify a change silently consumed
@@ -147,6 +151,14 @@ func (r *Runner) checkContext() error {
 
 func (r *Runner) execute(ctx context.Context, cancel context.CancelFunc, pipeline Pipeline, run *Run) {
 	defer cancel()
+	if r.OnStart != nil {
+		if err := r.OnStart(*run); err != nil {
+			r.append(run, LogLine{At: time.Now(), Step: "Vorbereiten",
+				Text: "Vorbereitung fehlgeschlagen: " + err.Error(), Err: true})
+			r.finish(run, "fehlgeschlagen")
+			return
+		}
+	}
 	for _, step := range pipeline.Steps {
 		r.append(run, LogLine{At: time.Now(), Step: step.Name, Text: "→ make " + strings.Join(step.Args, " ")})
 		r.setStep(run, step.Name)

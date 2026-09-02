@@ -17,6 +17,7 @@ import (
 
 	"missioncontrol/internal/cluster"
 	"missioncontrol/internal/deploy"
+	"missioncontrol/internal/release"
 	"missioncontrol/internal/tickets"
 )
 
@@ -592,6 +593,10 @@ func deployServer(t *testing.T, contextName string) (*Server, *tickets.Store) {
 	server.deploy = deploy.NewRunner(dir,
 		write("make", "#!/bin/sh\necho \"ok $*\"\n"),
 		write("kubectl", "#!/bin/sh\necho "+contextName+"\n"))
+	// RepoRoot ebenfalls in das Wegwerf-Verzeichnis: ohne das schreibt
+	// beforeDeploy die Release-Notiz in das echte Repository, und ein Test, der
+	// den Arbeitsbaum verändert, ist ein Fehler für sich (HF-0105).
+	server.config.RepoRoot = dir
 	// New() verdrahtet den Rückruf, wenn der Runner beim Bauen schon da ist.
 	// Hier wird er nachträglich gesetzt, also muss das hier auch passieren -
 	// sonst testet der Helfer eine Verdrahtung, die es nicht gibt.
@@ -1063,5 +1068,68 @@ func TestOpenTicketsNeverClaimADelivery(t *testing.T) {
 		if after := ticketStatus(t, store, ticket.Key); after.Delivered != "" {
 			t.Fatalf("Status %q setzte eine Auslieferung: %q", status, after.Delivered)
 		}
+	}
+}
+
+// HF-0105: die Release-Notiz muss geschrieben sein, BEVOR das Image gebaut
+// wird - sonst enthält das Image seine eigene Release nicht. Der Test prüft
+// deshalb den Vorbereitungsschritt und nicht das Ergebnis am Ende.
+func TestReleaseNotesAreWrittenBeforeTheBuild(t *testing.T) {
+	server, store := deployServer(t, "kind-dev")
+	ticket, err := store.Create(tickets.NewTicket{Title: "Tierarzt als Entität",
+		Author: "Codex", Component: "domain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = server.beforeDeploy(deploy.Run{
+		Pipeline: "homeflow", Version: "0.16.0", StartedBy: "Marco",
+		Tickets: []string{ticket.Key},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	datei, err := release.Load(filepath.Join(server.config.RepoRoot, releaseNotesPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(datei.Releases) != 1 || datei.Releases[0].Version != "0.16.0" {
+		t.Fatalf("Historie=%#v", datei.Releases)
+	}
+	eintrag := datei.Releases[0]
+	if len(eintrag.Tickets) != 1 || eintrag.Tickets[0].Key != ticket.Key {
+		t.Fatalf("Tickets fehlen in der Notiz: %#v", eintrag.Tickets)
+	}
+	// Der Titel steht ausgeschrieben drin und nicht als Verweis: die Notiz
+	// wandert ins Image und muss ohne Mission Control lesbar bleiben.
+	if eintrag.Tickets[0].Title != "Tierarzt als Entität" {
+		t.Fatalf("Titel=%q", eintrag.Tickets[0].Title)
+	}
+
+	// Zusätzlich die lesbare Fassung.
+	lesbar := filepath.Join(server.config.RepoRoot, "docs", "releases", "0.16.0.md")
+	raw, err := os.ReadFile(lesbar)
+	if err != nil {
+		t.Fatalf("lesbare Notiz fehlt: %v", err)
+	}
+	if !strings.Contains(string(raw), ticket.Key) {
+		t.Fatalf("Ticket fehlt in der Markdown-Fassung:\n%s", raw)
+	}
+}
+
+// Andere Abläufe liefern HomeFlow nicht aus und schreiben deshalb auch keine
+// Notiz. Sonst stünde in der Historie eine Release, die es nie gab.
+func TestOnlyTheHomeflowPipelineWritesReleaseNotes(t *testing.T) {
+	server, _ := deployServer(t, "kind-dev")
+	for _, pipeline := range []string{"monitoring", "missioncontrol", "pruefen"} {
+		if err := server.beforeDeploy(deploy.Run{
+			Pipeline: pipeline, Version: "0.16.0", StartedBy: "Marco",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(server.config.RepoRoot, releaseNotesPath)); !os.IsNotExist(err) {
+		t.Fatalf("keine Notiz erwartet, err=%v", err)
 	}
 }

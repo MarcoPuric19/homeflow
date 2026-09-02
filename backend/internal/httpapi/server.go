@@ -26,10 +26,16 @@ import (
 	"homeflow/backend/internal/observability"
 	"homeflow/backend/internal/pets"
 	"homeflow/backend/internal/receipts"
+	"homeflow/backend/internal/release"
 	"homeflow/backend/internal/reminders"
 	"homeflow/backend/internal/shopping"
 	"homeflow/backend/internal/vets"
 )
+
+// Version ist die Release, mit der dieses Binary gebaut wurde. cmd/homeflow
+// setzt sie beim Start aus dem über -ldflags eingespeisten Wert; ohne das steht
+// hier "unbekannt", und genau das ist die ehrliche Antwort.
+var Version = "unbekannt"
 
 type Server struct {
 	logger    *slog.Logger
@@ -105,6 +111,10 @@ func NewFullWithOptions(logger *slog.Logger, authenticator auth.Authenticator, s
 	}
 
 	private := http.NewServeMux()
+	// Hinter der Anmeldung, nicht davor: die Notizen tragen Ticketnamen, und die
+	// beschreiben ein Haushaltssystem. Sie werden nach dem Anmelden angezeigt,
+	// also reicht das (HF-0105).
+	private.HandleFunc("GET /api/v1/version", s.versionInfo)
 	private.HandleFunc("GET /api/v1/shopping/items", s.listItems)
 	private.HandleFunc("GET /api/v1/shopping/lists", s.listShoppingLists)
 	private.HandleFunc("POST /api/v1/shopping/items", s.createItem)
@@ -1361,6 +1371,27 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
+}
+
+// versionInfo beantwortet, was die Anwendung ist und was in ihr steckt.
+//
+// Vorher konnte HomeFlow das nicht: das Binary kannte seine Version nicht, und
+// es gab keinen Endpunkt dafür. Am 2026-09-02 liefen unter demselben Tag drei
+// verschiedene Images, und niemand konnte von innen sehen, welches (HF-0105).
+func (s *Server) versionInfo(w http.ResponseWriter, _ *http.Request) {
+	antwort := map[string]any{
+		"version":  Version,
+		"releases": release.History(),
+	}
+	if aktuell, ok := release.Current(Version); ok {
+		antwort["aktuell"] = aktuell
+	} else {
+		// Kein Eintrag zur laufenden Version heißt: gebaut, aber nicht über die
+		// Pipeline ausgeliefert. Das ist ein Befund und keine Lücke.
+		antwort["hinweis"] = "Zu dieser Version gibt es keine Release-Notiz. " +
+			"Das Binary wurde gebaut, aber nicht über die Deploy-Pipeline ausgeliefert."
+	}
+	writeJSON(w, http.StatusOK, antwort)
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {

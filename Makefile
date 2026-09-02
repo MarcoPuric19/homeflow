@@ -123,7 +123,7 @@ verify-backup: ## Verify BACKUP_DIR checksums and archive structure
 	./scripts/verify-backup.sh "$(BACKUP_DIR)"
 
 docker-build: ## Build the API image
-	docker build -f docker/Dockerfile -t $(IMAGE) .
+	docker build -f docker/Dockerfile --build-arg VERSION=$(VERSION) -t $(IMAGE) .
 
 docker-push: ## Push to the existing local registry
 	docker push $(IMAGE)

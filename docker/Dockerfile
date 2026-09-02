@@ -13,8 +13,12 @@ RUN go mod download
 COPY backend/ ./
 ARG TARGETOS=linux
 ARG TARGETARCH
+# VERSION kommt aus der Makefile. Ohne diesen Wert meldet die Anwendung
+# "unbekannt" - was ehrlich ist, aber die Frage "was laeuft hier eigentlich"
+# unbeantwortet laesst (HF-0105).
+ARG VERSION=unbekannt
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/homeflow ./cmd/homeflow
+    go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/homeflow ./cmd/homeflow
 
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

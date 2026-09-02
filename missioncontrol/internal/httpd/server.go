@@ -72,6 +72,7 @@ func New(logger *slog.Logger, store *tickets.Store, run cluster.Runner, git repo
 		mux.Handle("/", noCache(http.FileServer(http.Dir(config.WebRoot))))
 	}
 	if deployer != nil {
+		deployer.OnStart = s.beforeDeploy
 		deployer.OnFinish = s.afterDeploy
 	}
 	s.handler = headers(sameOriginOnly(mux))
