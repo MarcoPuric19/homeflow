@@ -69,7 +69,7 @@ func New(logger *slog.Logger, store *tickets.Store, run cluster.Runner, git repo
 	mux.HandleFunc("POST /api/deploy/cancel", s.deployCancel)
 	mux.HandleFunc("POST /api/deploy/restart", s.deployRestart)
 	if config.WebRoot != "" {
-		mux.Handle("/", http.FileServer(http.Dir(config.WebRoot)))
+		mux.Handle("/", noCache(http.FileServer(http.Dir(config.WebRoot))))
 	}
 	if deployer != nil {
 		deployer.OnFinish = s.afterDeploy
@@ -323,3 +323,21 @@ func (s *Server) respond(w http.ResponseWriter, ticket tickets.Ticket, err error
 
 // Statuses exposes the allowed values so the UI never invents its own.
 func Statuses() []string { return tickets.Columns() }
+
+// noCache lässt den Browser jede Datei nachfragen, statt sie zu raten.
+//
+// Der FileServer schickt nur Last-Modified und kein Cache-Control. Damit cachet
+// ein Browser heuristisch - er darf eine Datei ohne Rückfrage weiterverwenden -,
+// und genau das ist zweimal passiert: die Oberfläche war längst umgebaut, und
+// im Browser stand die alte Fassung. Zweimal hieß der Befund "ist immer noch
+// ein Board", und zweimal habe ich am falschen Ende gesucht.
+//
+// no-cache heißt nicht "nicht speichern", sondern "vor jeder Benutzung
+// nachfragen". Auf einem Cockpit, das auf dem Loopback für einen Menschen läuft,
+// kostet das nichts und spart die Frage, ob man gerade den aktuellen Stand sieht.
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		next.ServeHTTP(w, r)
+	})
+}
