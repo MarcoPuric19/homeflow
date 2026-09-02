@@ -237,8 +237,17 @@ func (s *Store) Comment(key, author, text string) (Ticket, error) {
 // Field changes all share one shape: validate, note the change as a comment so
 // the history stays in the file, and write.
 func (s *Store) setField(key, author, label, value string, check func(string) bool, get func(*Ticket) string, set func(*Ticket, string)) (Ticket, error) {
-	value, author = strings.TrimSpace(value), strings.TrimSpace(author)
-	if value == "" || author == "" || len(value) > 60 || (check != nil && !check(value)) {
+	return s.setFieldBy(key, Actor{Name: author}, label, value, check, get, set)
+}
+
+// setFieldBy records the change as an Event rather than a Comment. Until
+// MC-0025 both lived in the comment stream, which meant the history of a ticket
+// could not be read apart from the conversation about it — and a hand-written
+// comment reading "Status: Test → Fertig" was indistinguishable from a real
+// change.
+func (s *Store) setFieldBy(key string, by Actor, label, value string, check func(string) bool, get func(*Ticket) string, set func(*Ticket, string)) (Ticket, error) {
+	value, by.Name = strings.TrimSpace(value), strings.TrimSpace(by.Name)
+	if value == "" || by.Name == "" || len(value) > 60 || (check != nil && !check(value)) {
 		return Ticket{}, ErrInvalid
 	}
 	return s.update(key, func(ticket *Ticket) {
@@ -247,9 +256,39 @@ func (s *Store) setField(key, author, label, value string, check func(string) bo
 			return
 		}
 		set(ticket, value)
-		ticket.Comments = append(ticket.Comments, Comment{Author: author, At: s.now().Truncate(time.Second),
-			Text: fmt.Sprintf("%s: %s → %s", label, previous, value)})
+		ticket.Events = append(ticket.Events, Event{
+			At: s.now().Truncate(time.Second), Author: by.Name, Origin: by.Origin,
+			Field: label, From: previous, To: value,
+		})
 	})
+}
+
+// SetFieldBy is the entry point the HTTP layer uses, so that the observable
+// origin of a request reaches the record. The field name comes from the route,
+// never from the request body.
+func (s *Store) SetFieldBy(key, field, value string, by Actor) (Ticket, error) {
+	switch field {
+	case "status":
+		return s.setFieldBy(key, by, "Status", value, ValidStatus,
+			func(t *Ticket) string { return t.Status }, func(t *Ticket, v string) { t.Status = v })
+	case "owner":
+		return s.setFieldBy(key, by, "Zuständig", value, nil,
+			func(t *Ticket) string { return t.Owner }, func(t *Ticket, v string) { t.Owner = v })
+	case "version":
+		return s.setFieldBy(key, by, "Version", value, nil,
+			func(t *Ticket) string { return t.Version }, func(t *Ticket, v string) { t.Version = v })
+	case "priority":
+		return s.setFieldBy(key, by, "Priorität", value, ValidPriority,
+			func(t *Ticket) string { return t.Priority }, func(t *Ticket, v string) { t.Priority = v })
+	case "type":
+		return s.setFieldBy(key, by, "Typ", value, ValidType,
+			func(t *Ticket) string { return t.Type }, func(t *Ticket, v string) { t.Type = v })
+	case "epic":
+		return s.setFieldBy(key, by, "Epic", value, ValidKey,
+			func(t *Ticket) string { return t.Epic }, func(t *Ticket, v string) { t.Epic = v })
+	default:
+		return Ticket{}, ErrInvalid
+	}
 }
 
 func (s *Store) SetStatus(key, status, author string) (Ticket, error) {
@@ -303,8 +342,15 @@ func (s *Store) SetEpic(key, epic, author string) (Ticket, error) {
 // SetScope takes a comma separated list, because that is how it is typed and
 // how it is stored in the file.
 func (s *Store) SetScope(key, scope, author string) (Ticket, error) {
-	author = strings.TrimSpace(author)
-	if author == "" {
+	return s.SetScopeBy(key, scope, Actor{Name: author})
+}
+
+// SetScopeBy has its own implementation because the scope is a list, not a
+// value: it is normalised before the comparison, so that reordering or
+// respacing the same paths is not recorded as a change.
+func (s *Store) SetScopeBy(key, scope string, by Actor) (Ticket, error) {
+	by.Name = strings.TrimSpace(by.Name)
+	if by.Name == "" {
 		return Ticket{}, ErrInvalid
 	}
 	cleaned := cleanScope(strings.Split(scope, ","))
@@ -315,14 +361,10 @@ func (s *Store) SetScope(key, scope, author string) (Ticket, error) {
 			return
 		}
 		ticket.Scope = cleaned
-		if next == "" {
-			next = "(keiner)"
-		}
-		if previous == "" {
-			previous = "(keiner)"
-		}
-		ticket.Comments = append(ticket.Comments, Comment{Author: author, At: s.now().Truncate(time.Second),
-			Text: fmt.Sprintf("Scope: %s → %s", previous, next)})
+		ticket.Events = append(ticket.Events, Event{
+			At: s.now().Truncate(time.Second), Author: by.Name, Origin: by.Origin,
+			Field: "Scope", From: previous, To: next,
+		})
 	})
 }
 

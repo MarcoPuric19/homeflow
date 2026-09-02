@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -245,11 +246,11 @@ func (s *Server) commentTicket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) statusTicket(w http.ResponseWriter, r *http.Request) {
-	s.setField(w, r, s.store.SetStatus)
+	s.setField(w, r, "status")
 }
 
 func (s *Server) ownerTicket(w http.ResponseWriter, r *http.Request) {
-	s.setField(w, r, s.store.SetOwner)
+	s.setField(w, r, "owner")
 }
 
 // board hands the UI the column order and the current version, so neither is
@@ -265,15 +266,15 @@ func (s *Server) board(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) priorityTicket(w http.ResponseWriter, r *http.Request) {
-	s.setField(w, r, s.store.SetPriority)
+	s.setField(w, r, "priority")
 }
 
 func (s *Server) typeTicket(w http.ResponseWriter, r *http.Request) {
-	s.setField(w, r, s.store.SetType)
+	s.setField(w, r, "type")
 }
 
 func (s *Server) epicTicket(w http.ResponseWriter, r *http.Request) {
-	s.setField(w, r, s.store.SetEpic)
+	s.setField(w, r, "epic")
 }
 
 // scopeTicket differs from the others: an empty value is legitimate, it clears
@@ -286,13 +287,35 @@ func (s *Server) scopeTicket(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
-	ticket, err := s.store.SetScope(r.PathValue("id"), input.Wert, input.Author)
+	ticket, err := s.store.SetScopeBy(r.PathValue("id"), input.Wert, actorOf(r, input.Author))
 	s.respond(w, ticket, err, http.StatusOK)
 }
 
 // setField serves every "change one field" endpoint: they all take the same
 // body and map errors the same way.
-func (s *Server) setField(w http.ResponseWriter, r *http.Request, apply func(key, value, author string) (tickets.Ticket, error)) {
+// actorOf records what the request actually shows, next to the name it claims.
+// There is no login here on purpose, so the name is a claim and cannot be
+// verified. The origin is not proof either — it is evidence, and it is the
+// piece that was missing when a test call carrying "author":"Marco" put an
+// acceptance under his name that he never gave (HF-0073).
+func actorOf(r *http.Request, name string) tickets.Actor {
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	agent := r.UserAgent()
+	if len(agent) > 60 {
+		agent = agent[:60] + "…"
+	}
+	if agent == "" {
+		agent = "ohne User-Agent"
+	}
+	return tickets.Actor{Name: name, Origin: host + ", " + agent}
+}
+
+// setField takes the field name from the route rather than from the body, so a
+// request cannot choose which field it writes.
+func (s *Server) setField(w http.ResponseWriter, r *http.Request, field string) {
 	var input struct {
 		Wert   string `json:"wert"`
 		Author string `json:"author"`
@@ -300,12 +323,12 @@ func (s *Server) setField(w http.ResponseWriter, r *http.Request, apply func(key
 	if !decode(w, r, &input) {
 		return
 	}
-	ticket, err := apply(r.PathValue("id"), input.Wert, input.Author)
+	ticket, err := s.store.SetFieldBy(r.PathValue("id"), field, input.Wert, actorOf(r, input.Author))
 	s.respond(w, ticket, err, http.StatusOK)
 }
 
 func (s *Server) versionTicket(w http.ResponseWriter, r *http.Request) {
-	s.setField(w, r, s.store.SetVersion)
+	s.setField(w, r, "version")
 }
 
 func (s *Server) respond(w http.ResponseWriter, ticket tickets.Ticket, err error, success int) {

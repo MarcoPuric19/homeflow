@@ -102,6 +102,27 @@ var keyPattern = regexp.MustCompile(`^(HF|MC)-[0-9]{4}$`)
 
 func ValidKey(key string) bool { return keyPattern.MatchString(key) }
 
+// Actor is who claims to be acting, plus what the system could actually
+// observe about the request. The two are deliberately separate fields: there is
+// no login, so Name is a claim and nothing more. Origin is evidence — it does
+// not prevent a forged name, it makes one visible afterwards.
+type Actor struct {
+	Name   string
+	Origin string
+}
+
+// Event is one recorded field change. It is kept apart from Comment on purpose:
+// a comment is what somebody said, an event is what happened. Mixing them makes
+// both unreadable, and lets a hand-written comment imitate a change record.
+type Event struct {
+	At     time.Time `json:"at"`
+	Author string    `json:"author"`
+	Field  string    `json:"field"`
+	From   string    `json:"from"`
+	To     string    `json:"to"`
+	Origin string    `json:"origin"`
+}
+
 type Comment struct {
 	Author string    `json:"author"`
 	At     time.Time `json:"at"`
@@ -142,6 +163,7 @@ type Ticket struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 	Body      string    `json:"body"`
 	Comments  []Comment `json:"comments"`
+	Events    []Event   `json:"events"`
 }
 
 // Done reports whether a ticket still needs attention. Records are archive by

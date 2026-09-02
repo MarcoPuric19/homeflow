@@ -688,8 +688,33 @@ function ticketCard(ticket, compact) {
           el("div", { class: "comment-body" }, comment.text)))
       : [el("p", { class: "hint" }, "Noch nichts festgehalten.")]),
     commentRow(ticket)));
+  details.append(protokollBlock(ticket));
   details.append(el("section", { class: "block" }, el("h4", {}, "Felder"), fieldRow(ticket)));
   return details;
+}
+
+// Das Protokoll steht bewusst getrennt von den Kommentaren: ein Kommentar ist,
+// was jemand gesagt hat, ein Eintrag hier ist, was passiert ist. Bis MC-0025
+// lagen beide im selben Strom, und ein von Hand geschriebenes "Status: Test →
+// Fertig" war von einer echten Änderung nicht zu unterscheiden.
+//
+// Die Herkunft wird mitgezeigt, weil sie das einzige ist, was das System
+// wirklich beobachtet hat. Der Name ist eine Behauptung - es gibt bewusst keine
+// Anmeldung -, die Adresse und der User-Agent sind es nicht.
+function protokollBlock(ticket) {
+  const events = ticket.events ?? [];
+  return el("section", { class: "block" },
+    el("h4", {}, events.length ? `Protokoll (${events.length})` : "Protokoll"),
+    ...(events.length
+      ? [el("ol", { class: "protokoll" }, ...events.slice().reverse().map((e) =>
+          el("li", { class: "protokoll-eintrag" },
+            el("time", {}, new Date(e.at).toLocaleString("de-DE")),
+            el("span", { class: "protokoll-feld" }, e.field),
+            el("span", { class: "protokoll-wechsel" },
+              `${e.from || "(leer)"} → ${e.to || "(leer)"}`),
+            el("span", { class: "protokoll-wer" }, e.author),
+            el("span", { class: "protokoll-herkunft" }, e.origin || "Herkunft unbekannt"))))]
+      : [el("p", { class: "hint" }, "Noch keine Änderung aufgezeichnet.")]));
 }
 
 // Der Lebenslauf beantwortet, was bisher nirgends stand: seit wann es das

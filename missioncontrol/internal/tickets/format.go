@@ -8,6 +8,11 @@ import (
 
 const commentHeading = "## Kommentar — "
 
+// protokollHeading marks the audit trail. It is rendered before the comments so
+// that splitting on the comment heading cannot swallow it, and so that a reader
+// opening the file sees what happened before reading what was said.
+const protokollHeading = "## Protokoll\n"
+
 // render writes a ticket as Markdown with a small header. The format is meant
 // to be edited by hand as well: an assistant without the cockpit can open the
 // file, append a comment section and be understood.
@@ -39,6 +44,24 @@ func render(ticket Ticket) string {
 	if ticket.Body != "" {
 		b.WriteString(ticket.Body)
 		b.WriteString("\n")
+	}
+	if len(ticket.Events) > 0 {
+		b.WriteString("\n" + protokollHeading + "\n")
+		for _, e := range ticket.Events {
+			from, to := e.From, e.To
+			if from == "" {
+				from = "(leer)"
+			}
+			if to == "" {
+				to = "(leer)"
+			}
+			origin := e.Origin
+			if origin == "" {
+				origin = "(unbekannt)"
+			}
+			fmt.Fprintf(&b, "- %s · %s · %s · %s → %s · %s\n",
+				e.At.Format(time.RFC3339), e.Author, e.Field, from, to, origin)
+		}
 	}
 	for _, comment := range ticket.Comments {
 		fmt.Fprintf(&b, "\n%s%s · %s\n\n%s\n", commentHeading, comment.Author, comment.At.Format(time.RFC3339), comment.Text)
@@ -116,8 +139,10 @@ func parse(key, content string) (Ticket, error) {
 		}
 	}
 	body, comments := splitComments(rest)
+	body, events := splitEvents(body)
 	ticket.Body = strings.TrimSpace(body)
 	ticket.Comments = comments
+	ticket.Events = events
 	if ticket.Title == "" {
 		ticket.Title = key
 	}
@@ -135,7 +160,52 @@ func parse(key, content string) (Ticket, error) {
 	if ticket.Comments == nil {
 		ticket.Comments = []Comment{}
 	}
+	if ticket.Events == nil {
+		ticket.Events = []Event{}
+	}
 	return ticket, nil
+}
+
+// splitEvents peels the audit trail off the body. A value containing the exact
+// separator " · " would confuse this; field values are capped at 60 characters
+// and none has ever contained it, but a malformed line is skipped rather than
+// guessed at.
+func splitEvents(rest string) (string, []Event) {
+	head, block, found := strings.Cut(rest, protokollHeading)
+	if !found {
+		return rest, nil
+	}
+	events := []Event{}
+	for _, line := range strings.Split(block, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		parts := strings.SplitN(strings.TrimPrefix(line, "- "), " · ", 5)
+		if len(parts) < 5 {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, strings.TrimSpace(parts[0]))
+		if err != nil {
+			continue
+		}
+		from, to, _ := strings.Cut(parts[3], " → ")
+		events = append(events, Event{
+			At: at, Author: strings.TrimSpace(parts[1]), Field: strings.TrimSpace(parts[2]),
+			From: blankToEmpty(from), To: blankToEmpty(to), Origin: blankToEmpty(parts[4]),
+		})
+	}
+	return head, events
+}
+
+// blankToEmpty turns the placeholders back into the empty strings they stand
+// for, so a round trip through the file does not invent a value.
+func blankToEmpty(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "(leer)" || value == "(unbekannt)" {
+		return ""
+	}
+	return value
 }
 
 func splitComments(rest string) (string, []Comment) {

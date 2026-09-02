@@ -91,14 +91,19 @@ func TestRoundTripThroughTheFile(t *testing.T) {
 	if loaded.Status != StatusActive || loaded.Owner != "Codex" {
 		t.Fatalf("ticket=%#v", loaded)
 	}
-	if len(loaded.Comments) != 2 {
+	if len(loaded.Comments) != 1 {
 		t.Fatalf("kommentare=%d: %#v", len(loaded.Comments), loaded.Comments)
 	}
 	if loaded.Comments[0].Author != "Codex" || !strings.Contains(loaded.Comments[0].Text, "zwei Zeilen") {
 		t.Fatalf("kommentar=%#v", loaded.Comments[0])
 	}
-	if !strings.Contains(loaded.Comments[1].Text, "Backlog → In Bearbeitung") {
-		t.Fatalf("statuswechsel nicht protokolliert: %#v", loaded.Comments[1])
+	// Der Statuswechsel steht im Protokoll, nicht im Gespräch - und überlebt
+	// den Weg durch die Datei mit allen Feldern.
+	if len(loaded.Events) != 1 {
+		t.Fatalf("protokoll=%#v", loaded.Events)
+	}
+	if e := loaded.Events[0]; e.Field != "Status" || e.From != "Backlog" || e.To != StatusActive || e.Author != "Codex" {
+		t.Fatalf("event=%#v", e)
 	}
 	if !loaded.UpdatedAt.After(loaded.CreatedAt) {
 		t.Fatal("aktualisiert wurde nicht fortgeschrieben")
@@ -215,8 +220,9 @@ func TestVersionDefaultsToTheRunningReleaseAndCanBeChanged(t *testing.T) {
 	if changed.Version != "0.4.0" {
 		t.Fatalf("version=%q", changed.Version)
 	}
-	if !strings.Contains(changed.Comments[len(changed.Comments)-1].Text, "0.2.0 → 0.4.0") {
-		t.Fatalf("Versionswechsel nicht protokolliert: %#v", changed.Comments)
+	last := changed.Events[len(changed.Events)-1]
+	if last.Field != "Version" || last.From != "0.2.0" || last.To != "0.4.0" {
+		t.Fatalf("Versionswechsel nicht protokolliert: %#v", changed.Events)
 	}
 	reloaded, err := store.Get(ticket.Key)
 	if err != nil || reloaded.Version != "0.4.0" {
@@ -306,5 +312,43 @@ func TestListsAreNeverNil(t *testing.T) {
 	}
 	if loaded.Scope == nil || loaded.Tags == nil || loaded.Comments == nil {
 		t.Fatalf("nil-Liste nach dem Lesen: %#v", loaded)
+	}
+}
+
+// TestEventsSurviveTheFileAndCommentsCannotFakeThem covers the two properties
+// MC-0025 exists for. The first is plumbing: an origin recorded in memory has
+// to still be there after the ticket has been through the file. The second is
+// the point — a comment whose text looks exactly like a change record must not
+// become one, because that is precisely how a forged entry would be written.
+func TestEventsSurviveTheFileAndCommentsCannotFakeThem(t *testing.T) {
+	store := newTestStore(t)
+	ticket, err := store.Create(NewTicket{Project: "MC", Title: "Protokoll", Author: "Claude Code"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetFieldBy(ticket.Key, "status", StatusActive,
+		Actor{Name: "Codex", Origin: "127.0.0.1, curl/8.5.0"}); err != nil {
+		t.Fatal(err)
+	}
+	// Ein Kommentar, der wie ein Protokolleintrag aussieht.
+	if _, err := store.Comment(ticket.Key, "Marco", "Status: In Bearbeitung → Fertig"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Get(ticket.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Events) != 1 {
+		t.Fatalf("Kommentar wurde zum Protokolleintrag oder Eintrag verloren: %#v", loaded.Events)
+	}
+	got := loaded.Events[0]
+	if got.Origin != "127.0.0.1, curl/8.5.0" {
+		t.Fatalf("Herkunft ging durch die Datei verloren: %#v", got)
+	}
+	if got.Author != "Codex" || got.From != StatusBacklog || got.To != StatusActive {
+		t.Fatalf("event=%#v", got)
+	}
+	if loaded.Status != StatusActive {
+		t.Fatalf("status=%q - der Kommentar darf nichts geaendert haben", loaded.Status)
 	}
 }

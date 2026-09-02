@@ -118,8 +118,21 @@ func TestTicketLifecycleOverHTTP(t *testing.T) {
 		t.Fatalf("liste=%#v", list.Tickets)
 	}
 	final := list.Tickets[0]
-	if final.Status != tickets.StatusActive || final.Owner != "Claude Code" || len(final.Comments) != 3 {
+	// Seit MC-0025 sind Feldänderungen Events, keine Kommentare mehr: ein
+	// echter Kommentar bleibt übrig, Statuswechsel und Ownerwechsel stehen im
+	// Protokoll.
+	if final.Status != tickets.StatusActive || final.Owner != "Claude Code" || len(final.Comments) != 1 {
 		t.Fatalf("ticket=%#v", final)
+	}
+	if len(final.Events) != 2 {
+		t.Fatalf("protokoll=%#v", final.Events)
+	}
+	// Die Herkunft ist der Punkt der Übung: sie kommt aus der Anfrage, nicht
+	// aus dem Rumpf, und lässt sich deshalb nicht mitschicken.
+	for _, e := range final.Events {
+		if e.Origin == "" {
+			t.Fatalf("Event ohne Herkunft: %#v", e)
+		}
 	}
 }
 
