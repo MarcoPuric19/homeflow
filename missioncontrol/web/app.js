@@ -567,27 +567,33 @@ function filterBar(target, onChange) {
 // gemischt begraben 60 HF-Tickets die 20 MC-Tickets (MC-0021).
 let BOARD_PROJEKT = localStorage.getItem("mc.board.projekt") || "HF";
 
-function renderBoard() {
-  filterBar($("#boardFilters"), renderBoard);
+// Die Reiter sind der einzige Ort, an dem das Projekt gewaehlt wird. Sie
+// schreiben in filters.projekt, damit jede Ansicht, die matchesFilters
+// benutzt, ohne Zutun mitzieht.
+function projektReiter(container, onChange) {
   const projekte = META.projekte.map((p) => p.key);
   if (!projekte.includes(BOARD_PROJEKT)) BOARD_PROJEKT = projekte[0] ?? "HF";
-
-  // In einen eigenen Behälter rendern statt vor die Filterleiste zu hängen:
-  // eingefügt wird bei jedem Durchlauf, und ohne festen Platz vermehren sich
-  // die Reiter.
-  $("#boardTabs").replaceChildren(...projekte.map((key) => {
+  filters.projekt = BOARD_PROJEKT;
+  container.replaceChildren(...projekte.map((key) => {
     const offen = TICKETS.filter((t) => t.project === key && t.status !== "Fertig").length;
-    const tab = el("button", { class: "board-tab" + (key === BOARD_PROJEKT ? " active" : "") },
-      key, el("span", { class: "count" }, String(offen)));
+    const meta = META.projekte.find((p) => p.key === key) ?? {};
+    const tab = el("button", {
+      class: "board-tab" + (key === BOARD_PROJEKT ? " active" : ""),
+      title: meta.description ?? "",
+    }, meta.name ? `${key} — ${meta.name}` : key, el("span", { class: "count" }, String(offen)));
     tab.addEventListener("click", () => {
       BOARD_PROJEKT = key;
       localStorage.setItem("mc.board.projekt", key);
-      renderBoard();
+      onChange();
     });
     return tab;
   }));
+}
 
-  const visible = TICKETS.filter((t) => t.project === BOARD_PROJEKT && matchesFilters(t));
+function renderBoard() {
+  projektReiter($("#boardTabs"), renderBoard);
+  filterBar($("#boardFilters"), renderBoard);
+  const visible = TICKETS.filter(matchesFilters);
   const veraltet = visible.filter((t) => t.lebenslauf?.claimVeraltet);
   $("#boardWarn").replaceChildren(...(veraltet.length
     ? [el("p", { class: "board-warn" },
@@ -611,6 +617,7 @@ function renderBoard() {
 // The backlog groups by epic, which is the only structure 53 imported tickets
 // have; everything else is grouped by type.
 function renderBacklog() {
+  projektReiter($("#backlogTabs"), renderBacklog);
   filterBar($("#backlogFilters"), renderBacklog);
   const visible = TICKETS.filter(matchesFilters);
   const epics = visible.filter((t) => t.type === "Epic");
