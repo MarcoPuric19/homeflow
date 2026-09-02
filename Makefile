@@ -194,6 +194,9 @@ check-migrations: ## Check migration numbering against contracts.md 1.3 (no data
 	@echo "check-migrations:"
 	@./scripts/check-migrations.sh
 
+public-export: ## Build the derived public clone into a timestamped directory (never pushes)
+	@./scripts/public-export.sh "$${PUBLIC_EXPORT_DIR:-$${TMPDIR:-/tmp}/homeflow-public-$$(date +%Y%m%d-%H%M%S)}"
+
 check-publication: ## Audit the history before publishing (secrets, redactions, excluded paths)
 	@./scripts/check-publication.sh
 

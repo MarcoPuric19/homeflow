@@ -67,6 +67,30 @@ func Pipelines() []Pipeline {
 			Verify: &Step{Name: "Nachprüfen", Args: []string{"deploy-verify"}},
 		},
 		{
+			Name:  "veroeffentlichung-pruefen",
+			Title: "Veröffentlichungsstand prüfen",
+			Description: "Liest die Historie und meldet, was bei einer Veröffentlichung nach draußen ginge: " +
+				"Geheimnisse und Zahlungsdaten als harte Sperre, noch nicht geschwärzte Werte, " +
+				"auszuschließende Pfade. Ändert nichts und braucht kein git-filter-repo.",
+			Timeout: 5 * time.Minute,
+			Steps: []Step{
+				{Name: "Prüfen", Args: []string{"check-publication"}},
+			},
+		},
+		{
+			Name:  "veroeffentlichung-export",
+			Title: "Öffentlichen Export bauen",
+			Description: "Prüft erst den Stand und baut dann den abgeleiteten Klon in ein neues Verzeichnis. " +
+				"Pusht ausdrücklich NICHT — das bleibt ein bewusster Befehl im Terminal. " +
+				"Braucht git-filter-repo; fehlt es, bricht der Schritt mit einer Anleitung ab.",
+			Timeout: 15 * time.Minute,
+			Covers:  []string{"scripts/public-export.sh", "redactions.local.txt"},
+			Steps: []Step{
+				{Name: "Stand prüfen", Args: []string{"check-publication"}},
+				{Name: "Export bauen", Args: []string{"public-export"}},
+			},
+		},
+		{
 			Name:         "monitoring",
 			Title:        "Monitoring deployen",
 			Description:  "Wendet monitoring/kubernetes an: Prometheus, Grafana, kube-state-metrics.",
