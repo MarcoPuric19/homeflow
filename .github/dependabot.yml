@@ -1,0 +1,56 @@
+version: 2
+
+# Weekly, not daily: this is a two-person project, and a pull request nobody
+# reads is noise that trains you to ignore the channel.
+#
+# The github-actions ecosystem matters most here. Every action in
+# .github/workflows/ is pinned to a commit SHA rather than a tag, because a
+# tag can be moved to point at different code. Pinning without an updater
+# would freeze known-vulnerable versions in place — Dependabot is what makes
+# the pinning sustainable instead of merely strict.
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: actions
+
+  - package-ecosystem: gomod
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: gomod
+
+  - package-ecosystem: gomod
+    directory: /missioncontrol
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: gomod
+
+  - package-ecosystem: gomod
+    directory: /integrations
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: gomod
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: npm

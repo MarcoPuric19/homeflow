@@ -1,0 +1,31 @@
+name: Beobachtung oder Vorschlag
+description: Etwas ist aufgefallen, ist aber (noch) kein Fehler.
+labels: [beobachtung]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Für Auffälligkeiten außerhalb des eigenen Arbeitsbereichs — lieber
+        festhalten als stillschweigend mitreparieren.
+  - type: textarea
+    id: beobachtung
+    attributes:
+      label: Was ist dir aufgefallen?
+    validations:
+      required: true
+  - type: textarea
+    id: auswirkung
+    attributes:
+      label: Was wäre die Folge, wenn es so bleibt?
+      description: Auch „vermutlich keine" ist eine brauchbare Antwort.
+    validations:
+      required: false
+  - type: textarea
+    id: kosten
+    attributes:
+      label: Kostet der Vorschlag etwas?
+      description: >
+        Geld, ein Konto, ein Trial, eine Lizenz — oder RAM. HomeFlow läuft auf
+        einem Laptop mit knappem Budget; kostenlos heißt nicht ressourcenfrei.
+    validations:
+      required: false

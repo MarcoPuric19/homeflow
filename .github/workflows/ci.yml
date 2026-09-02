@@ -1,0 +1,151 @@
+name: CI
+
+# This workflow deliberately runs `make ci` — the very target used on the
+# developer laptop — instead of reimplementing the checks as workflow steps.
+# A CI that verifies less than the local run is worse than none: it goes green
+# and covers nothing. Every check here therefore has to exist as a make target.
+#
+# What `make ci` covers: gofmt, go vet, unit tests (-race), the frontend test
+# and lint runs, both kustomize renders, migration-number collisions, the
+# resource contract against the rendered manifests, promtool rule tests, and
+# Mission Control's own checks.
+#
+# Integration tests are a separate job on purpose: `make ci` runs without a
+# database, and that is a property worth keeping visible.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The default token is broader than anything here needs.
+permissions:
+  contents: read
+
+# A second push supersedes the first; queued runs are cancelled rather than
+# racing each other.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in sync with the cluster; `kubectl kustomize` renders the manifests.
+  KUBECTL_VERSION: v1.37.0
+  KUBECTL_SHA256: 6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f
+
+jobs:
+  ci:
+    name: make ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          # Single source of truth for the version — never a second literal.
+          go-version-file: backend/go.mod
+          # The Makefile pins GOCACHE/GOMODCACHE into ./.cache, which this
+          # action's own cache does not cover. Cached explicitly below.
+          cache: false
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Restore Go build and module caches
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .cache
+          key: go-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}
+          restore-keys: go-${{ runner.os }}-
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Install kubectl (pinned, checksum verified)
+        run: |
+          set -euo pipefail
+          curl -fsSLO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "${KUBECTL_SHA256}  kubectl" | sha256sum --check --status
+          sudo install -m 0755 kubectl /usr/local/bin/kubectl
+          rm -f kubectl
+
+      - name: Show tool versions
+        run: |
+          go version
+          node --version
+          kubectl version --client
+          docker version --format 'docker {{.Server.Version}}'
+
+      - name: make ci
+        run: make ci
+
+  integration:
+    name: make integration-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          # The target refuses any database whose name does not end in _test.
+          POSTGRES_DB: homeflow_test
+        ports:
+          - 5432:5432
+        # pg_isready alone is not enough locally: PostgreSQL reports ready
+        # during initdb and then restarts. The service health check plus the
+        # explicit query below cover that gap.
+        options: >-
+          --health-cmd "pg_isready -U postgres -d homeflow_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Check out
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      - name: Restore Go build and module caches
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .cache
+          key: go-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}
+          restore-keys: go-${{ runner.os }}-
+
+      - name: Wait for a real connection, not just a ready port
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U postgres -d homeflow_test >/dev/null 2>&1 \
+               && PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d homeflow_test \
+                    -c 'select 1' >/dev/null 2>&1; then
+              echo "database accepts queries"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "database never accepted a query" >&2
+          exit 1
+
+      - name: make integration-test
+        env:
+          HOMEFLOW_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/homeflow_test?sslmode=disable
+        run: make integration-test

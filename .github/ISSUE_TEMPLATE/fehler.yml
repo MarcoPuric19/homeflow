@@ -1,0 +1,48 @@
+name: Fehler
+description: Etwas verhält sich anders als beschrieben.
+labels: [fehler]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Bitte auf Deutsch — Tickets und Kommentare werden in diesem Projekt
+        auf Deutsch geführt.
+  - type: textarea
+    id: beobachtung
+    attributes:
+      label: Was ist passiert?
+      description: Beobachtung, nicht Vermutung. Fehlermeldungen bitte wörtlich.
+    validations:
+      required: true
+  - type: textarea
+    id: erwartet
+    attributes:
+      label: Was hättest du erwartet?
+    validations:
+      required: true
+  - type: textarea
+    id: schritte
+    attributes:
+      label: Wie lässt es sich auslösen?
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Steht in der Anwendung unter Version, oder `git rev-parse --short HEAD`.
+    validations:
+      required: false
+  - type: textarea
+    id: geprueft
+    attributes:
+      label: Was hast du bereits geprüft?
+      description: >
+        Auch das, was du nicht prüfen konntest. „Müsste funktionieren" hilft
+        niemandem — offen gesagte Lücken schon.
+    validations:
+      required: false

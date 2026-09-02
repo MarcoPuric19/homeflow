@@ -1,0 +1,54 @@
+name: Supply chain
+
+# govulncheck reports only vulnerabilities that are actually reachable through
+# the call graph, rather than every advisory that mentions a dependency
+# version. That difference is what makes the result worth acting on.
+#
+# Three Go modules live here and each is checked separately:
+#   backend/        the application
+#   missioncontrol/ the ticket cockpit (standard library only, zero requires)
+#   integrations/   the connector interfaces
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '41 4 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supply-chain-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  govulncheck:
+    name: govulncheck (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [backend, missioncontrol, integrations]
+    steps:
+      - name: Check out
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      - name: Run govulncheck
+        working-directory: ${{ matrix.module }}
+        run: |
+          set -euo pipefail
+          # Pinned, not @latest: a supply-chain check that silently pulls a
+          # moving version is the very thing it is meant to catch.
+          # Dependabot keeps this current via the gomod ecosystem.
+          go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
