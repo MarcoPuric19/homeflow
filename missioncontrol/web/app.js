@@ -688,9 +688,50 @@ function ticketCard(ticket, compact) {
           el("div", { class: "comment-body" }, comment.text)))
       : [el("p", { class: "hint" }, "Noch nichts festgehalten.")]),
     commentRow(ticket)));
+  details.append(beziehungenBlock(ticket));
   details.append(protokollBlock(ticket));
   details.append(el("section", { class: "block" }, el("h4", {}, "Felder"), fieldRow(ticket)));
   return details;
+}
+
+// Beziehungen werden immer beidseitig geschrieben - der Server lehnt
+// Selbstbezug, unbekannte Tickets und Zyklen in der Blockierrichtung ab. Hier
+// steht nur die Anzeige und der Weg, eine anzulegen (MC-0026).
+const BEZIEHUNGSARTEN = ["blockiert", "hängt ab von", "betrifft", "doppelt"];
+
+function beziehungenBlock(ticket) {
+  const relations = ticket.relations ?? [];
+  const art = el("select", {}, ...BEZIEHUNGSARTEN.map((a) => el("option", {}, a)));
+  const ziel = el("input", { placeholder: "HF-0123", size: "9" });
+  const knopf = el("button", {}, "Verknüpfen");
+  knopf.addEventListener("click", () => {
+    if (!ziel.value.trim()) return;
+    act(async () => {
+      await api(`/api/tickets/${ticket.key}/relations`,
+        jsonBody({ art: art.value, ziel: ziel.value.trim(), author: author() }));
+      ziel.value = "";
+    });
+  });
+  const zeile = (r) => {
+    const weg = el("button", { class: "link", title: "Beziehung beidseitig entfernen" }, "×");
+    weg.addEventListener("click", () => act(() => api(`/api/tickets/${ticket.key}/relations`, {
+      method: "DELETE", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ art: r.kind, ziel: r.key, author: author() }),
+    })));
+    return el("li", { class: "beziehung" },
+      el("span", { class: "beziehung-art" }, r.kind),
+      el("a", { href: `#${r.key}` }, r.key), weg);
+  };
+  const blocker = ticket.offene_blocker ?? [];
+  return el("section", { class: "block" },
+    el("h4", {}, relations.length ? `Beziehungen (${relations.length})` : "Beziehungen"),
+    ...(blocker.length
+      ? [el("p", { class: "blocker-warnung" }, `Offene Blocker: ${blocker.join(", ")}`)]
+      : []),
+    ...(relations.length
+      ? [el("ul", { class: "beziehungen" }, ...relations.map(zeile))]
+      : [el("p", { class: "hint" }, "Keine Verknüpfung.")]),
+    el("div", { class: "row" }, art, ziel, knopf));
 }
 
 // Das Protokoll steht bewusst getrennt von den Kommentaren: ein Kommentar ist,
@@ -746,8 +787,21 @@ function lifecycleRow(ticket) {
 }
 
 function fieldRow(ticket) {
-  const change = (field, value) => act(() =>
-    api(`/api/tickets/${ticket.key}/${field}`, jsonBody({ wert: value, author: author() })));
+  const change = (field, value) => {
+    // Ein Ticket beanspruchen, dessen Blocker offen sind, ist erlaubt - manchmal
+    // weiss der Mensch mehr als der Graph. Es soll nur niemand versehentlich
+    // tun (MC-0026).
+    const blocker = ticket.offene_blocker ?? [];
+    if (field === "status" && value === "In Bearbeitung" && blocker.length) {
+      const weiter = window.confirm(
+        `Offene Blocker:\n\n${blocker.join("\n")}\n\nTrotzdem beanspruchen?`);
+      if (!weiter) {
+        return;
+      }
+    }
+    return act(() =>
+      api(`/api/tickets/${ticket.key}/${field}`, jsonBody({ wert: value, author: author() })));
+  };
   // Ein Ticket, das nicht auf "In Bearbeitung" steht, ist nicht beansprucht.
   // Daran zu arbeiten ist erlaubt und war heute trotzdem ein Fehler, weil es
   // niemand sah. Jetzt steht es da - als Hinweis, nicht als Sperre: die Regel

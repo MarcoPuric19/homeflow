@@ -35,6 +35,7 @@ func render(ticket Ticket) string {
 		{"komponente", ticket.Component},
 		{"scope", strings.Join(ticket.Scope, ", ")},
 		{"tags", strings.Join(ticket.Tags, ", ")},
+		{"beziehungen", renderRelations(ticket.Relations)},
 		{"erstellt", ticket.CreatedAt.Format(time.RFC3339)},
 		{"aktualisiert", ticket.UpdatedAt.Format(time.RFC3339)},
 	} {
@@ -131,6 +132,8 @@ func parse(key, content string) (Ticket, error) {
 				ticket.Scope = cleanScope(strings.Split(value, ","))
 			case "tags":
 				ticket.Tags = cleanTags(strings.Split(value, ","))
+			case "beziehungen":
+				ticket.Relations = parseRelations(value)
 			case "erstellt":
 				ticket.CreatedAt, _ = time.Parse(time.RFC3339, value)
 			case "aktualisiert":
@@ -163,6 +166,9 @@ func parse(key, content string) (Ticket, error) {
 	if ticket.Events == nil {
 		ticket.Events = []Event{}
 	}
+	if ticket.Relations == nil {
+		ticket.Relations = []Relation{}
+	}
 	return ticket, nil
 }
 
@@ -170,6 +176,42 @@ func parse(key, content string) (Ticket, error) {
 // separator " · " would confuse this; field values are capped at 60 characters
 // and none has ever contained it, but a malformed line is skipped rather than
 // guessed at.
+// renderRelations writes "blockiert MC-0027, hängt ab von MC-0025". The kind
+// comes first because it reads as a sentence, and because a key alone would not
+// say what the link means.
+func renderRelations(relations []Relation) string {
+	parts := make([]string, 0, len(relations))
+	for _, r := range relations {
+		parts = append(parts, r.Kind+" "+r.Key)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// parseRelations is strict about the kind and drops what it does not
+// understand, so a typo cannot silently become a different relation. The kinds
+// are tried longest first: "hängt ab von" would otherwise never be reached if a
+// shorter kind were a prefix of it.
+func parseRelations(value string) []Relation {
+	relations := []Relation{}
+	for _, entry := range strings.Split(value, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		for _, kind := range []string{RelDependsOn, RelDuplicates, RelBlocks, RelRelates} {
+			if !strings.HasPrefix(entry, kind+" ") {
+				continue
+			}
+			key := strings.TrimSpace(strings.TrimPrefix(entry, kind))
+			if ValidKey(key) {
+				relations = append(relations, Relation{Kind: kind, Key: key})
+			}
+			break
+		}
+	}
+	return relations
+}
+
 func splitEvents(rest string) (string, []Event) {
 	head, block, found := strings.Cut(rest, protokollHeading)
 	if !found {

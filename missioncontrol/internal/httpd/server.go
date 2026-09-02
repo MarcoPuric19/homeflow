@@ -60,6 +60,8 @@ func New(logger *slog.Logger, store *tickets.Store, run cluster.Runner, git repo
 	mux.HandleFunc("POST /api/tickets/{id}/type", s.typeTicket)
 	mux.HandleFunc("POST /api/tickets/{id}/epic", s.epicTicket)
 	mux.HandleFunc("POST /api/tickets/{id}/scope", s.scopeTicket)
+	mux.HandleFunc("POST /api/tickets/{id}/relations", s.addRelation)
+	mux.HandleFunc("DELETE /api/tickets/{id}/relations", s.removeRelation)
 	mux.HandleFunc("GET /api/board", s.board)
 	mux.HandleFunc("GET /api/logs", s.logs)
 	mux.HandleFunc("GET /api/versions", s.versions)
@@ -203,6 +205,12 @@ func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
 	// Der Lebenslauf wird berechnet und nicht gespeichert: "seit wann offen" und
 	// "Claim veraltet" haengen an der Uhr, nicht an der Datei (MC-0021).
 	now := time.Now()
+	// Offene Blocker werden aus der bereits geladenen Liste berechnet, nicht je
+	// Ticket nachgeschlagen: sonst wird aus einer Ansicht ein Dateisturm.
+	status := make(map[string]string, len(list))
+	for _, ticket := range list {
+		status[ticket.Key] = ticket.Status
+	}
 	angereichert := make([]map[string]any, 0, len(list))
 	for _, ticket := range list {
 		raw, err := json.Marshal(ticket)
@@ -214,9 +222,43 @@ func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		felder["lebenslauf"] = ticket.Life(now)
+		blocker := []string{}
+		for _, r := range ticket.Relations {
+			if r.Kind != tickets.RelDependsOn {
+				continue
+			}
+			if other, ok := status[r.Key]; ok && other != tickets.StatusDone {
+				blocker = append(blocker, r.Key+" ("+other+")")
+			}
+		}
+		felder["offene_blocker"] = blocker
 		angereichert = append(angereichert, felder)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tickets": angereichert})
+}
+
+// Beziehungen werden immer beidseitig geschrieben; der Store lehnt Selbstbezug,
+// unbekannte Tickets und Zyklen in der Blockierrichtung ab.
+func (s *Server) relation(w http.ResponseWriter, r *http.Request,
+	apply func(key, kind, other string, by tickets.Actor) (tickets.Ticket, error)) {
+	var input struct {
+		Art    string `json:"art"`
+		Ziel   string `json:"ziel"`
+		Author string `json:"author"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	ticket, err := apply(r.PathValue("id"), input.Art, input.Ziel, actorOf(r, input.Author))
+	s.respond(w, ticket, err, http.StatusOK)
+}
+
+func (s *Server) addRelation(w http.ResponseWriter, r *http.Request) {
+	s.relation(w, r, s.store.AddRelationBy)
+}
+
+func (s *Server) removeRelation(w http.ResponseWriter, r *http.Request) {
+	s.relation(w, r, s.store.RemoveRelationBy)
 }
 
 func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {

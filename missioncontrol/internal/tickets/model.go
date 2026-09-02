@@ -123,6 +123,37 @@ type Event struct {
 	Origin string    `json:"origin"`
 }
 
+// Relation kinds. Each has an inverse, and both halves are always written:
+// a relation maintained on one side only looks exactly like a maintained one
+// and is wrong precisely when it matters.
+const (
+	RelBlocks     = "blockiert"
+	RelDependsOn  = "hängt ab von"
+	RelRelates    = "betrifft"
+	RelDuplicates = "doppelt"
+)
+
+// Inverse returns the counterpart a relation gets on the other ticket.
+func Inverse(kind string) (string, bool) {
+	switch kind {
+	case RelBlocks:
+		return RelDependsOn, true
+	case RelDependsOn:
+		return RelBlocks, true
+	case RelRelates:
+		return RelRelates, true
+	case RelDuplicates:
+		return RelDuplicates, true
+	}
+	return "", false
+}
+
+// Relation points at another ticket. Kind is one of the constants above.
+type Relation struct {
+	Kind string `json:"kind"`
+	Key  string `json:"key"`
+}
+
 type Comment struct {
 	Author string    `json:"author"`
 	At     time.Time `json:"at"`
@@ -157,13 +188,14 @@ type Ticket struct {
 	// Scope names the files a ticket works on. It is what Austausch.md's claim
 	// table did by hand: a ticket in "In Bearbeitung" with a scope is a claim,
 	// and two such tickets on overlapping paths are a collision.
-	Scope     []string  `json:"scope"`
-	Tags      []string  `json:"tags"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	Body      string    `json:"body"`
-	Comments  []Comment `json:"comments"`
-	Events    []Event   `json:"events"`
+	Scope     []string   `json:"scope"`
+	Tags      []string   `json:"tags"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
+	Body      string     `json:"body"`
+	Comments  []Comment  `json:"comments"`
+	Events    []Event    `json:"events"`
+	Relations []Relation `json:"relations"`
 }
 
 // Done reports whether a ticket still needs attention. Records are archive by

@@ -71,6 +71,13 @@ button.primary{background:var(--accent);color:#0b1016;border:0;border-radius:8px
 .protokoll-wechsel{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}
 .protokoll-wer{color:var(--fg)}
 .protokoll-herkunft{grid-column:1/-1;color:var(--dim);font-size:11px}
+/* Beziehungen: die Art zuerst, weil sie den Sinn traegt (MC-0026). */
+.beziehungen{list-style:none;margin:0 0 8px;padding:0;font-size:12px}
+.beziehung{display:flex;gap:8px;align-items:baseline;padding:3px 0}
+.beziehung-art{color:var(--dim);min-width:96px}
+.beziehung a{color:var(--accent);text-decoration:none}
+.beziehung a:hover{text-decoration:underline}
+.blocker-warnung{color:var(--warn,#e0a030);font-size:12px;margin:0 0 8px}
 .hint{color:var(--dim);font-size:12px;margin:0 0 10px}
 .stage{display:grid;grid-template-columns:1fr;gap:14px}
 .stage:has(.detail){grid-template-columns:1fr 300px}
