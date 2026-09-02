@@ -55,11 +55,34 @@ for image in d.get('images',[]):
 " "$tag"
 }
 
-# Worauf laufen die Pods gerade wirklich?
+# Worauf laufen die Pods, die tatsächlich Verkehr bedienen?
+#
+# Nur bereite Pods zählen, und beendende gar nicht. Die erste Fassung sammelte
+# alle ein - während eines Rollouts sind das zwei, der neue und der alte, und
+# der Vergleich lief gegen zwei Zeilen statt gegen eine. Ergebnis war ein
+# Fehlalarm: Lauf #2 am 2026-09-02 hat korrekt ausgeliefert und galt trotzdem
+# als fehlgeschlagen.
+#
+# Ein crashloopender Pod ist nicht bereit und faellt damit heraus - genau
+# richtig, denn er bedient niemanden.
 pod_images() {
-  kubectl_ get pods -l "$SELECTOR" \
-    -o jsonpath='{range .items[*]}{.status.containerStatuses[0].imageID}{"\n"}{end}' |
-    sed 's/.*@//' | sed 's/^sha256://' | sort -u | grep -v '^$' || true
+  kubectl_ get pods -l "$SELECTOR" -o json 2>/dev/null | python3 -c "
+import json,sys
+try:
+    data=json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for pod in data.get('items',[]):
+    if pod['metadata'].get('deletionTimestamp'):
+        continue
+    for status in pod['status'].get('containerStatuses',[]):
+        if not status.get('ready'):
+            continue
+        image=status.get('imageID','')
+        if '@' in image:
+            image=image.split('@',1)[1]
+        print(image.removeprefix('sha256:'))
+" | sort -u | grep -v '^$' || true
 }
 
 soll=$(node_image)
@@ -71,10 +94,14 @@ soll=${soll#sha256:}
 
 ist=$(pod_images)
 printf "  Image laut Node:  %.12s\n" "$soll"
-printf "  Pods laufen auf:  %.12s\n" "$(echo "$ist" | tr '\n' ' ')"
+if [ -z "$ist" ]; then
+  echo "  Kein bereiter Pod - nichts, was Verkehr bedienen könnte."
+else
+  printf "  Bereite Pods auf: %s\n" "$(echo "$ist" | cut -c1-12 | tr '\n' ' ')"
+fi
 
-if [ "$ist" = "$soll" ]; then
-  echo "  Ausgeliefert: der laufende Pod nutzt das Image aus dem Node."
+if [ -n "$ist" ] && [ "$ist" = "$soll" ]; then
+  echo "  Ausgeliefert: der bereite Pod nutzt das Image aus dem Node."
   exit 0
 fi
 
@@ -98,10 +125,10 @@ if ! kubectl_ rollout status "deployment/$DEPLOYMENT" --timeout="$ROLLOUT_TIMEOU
 fi
 
 ist=$(pod_images)
-if [ "$ist" != "$soll" ]; then
-  echo "FEHLER  Auch nach dem Rollout läuft der Pod nicht auf dem Image aus dem Node." >&2
-  echo "        Node: $soll" >&2
-  echo "        Pod:  $ist" >&2
+if [ -z "$ist" ] || [ "$ist" != "$soll" ]; then
+  echo "FEHLER  Auch nach dem Rollout bedient kein Pod mit dem Image aus dem Node." >&2
+  printf "        Node:   %s\n" "$soll" >&2
+  printf "        bereit: %s\n" "$(echo "${ist:-keiner}" | tr '\n' ' ')" >&2
   exit 1
 fi
 echo "  Ausgeliefert nach erzwungenem Rollout."
