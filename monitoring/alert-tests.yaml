@@ -1,0 +1,123 @@
+# promtool-Tests für die Alarmregeln (HF-0103).
+#
+# Anlass ist ein eigener Fehler: HomeflowClusterMemoryCommitted war syntaktisch
+# einwandfrei, hat gerendert und ausgewertet - und hätte das Ereignis, für das
+# sie geschrieben war, nie gemeldet. Aufgefallen ist das nur, weil ich den
+# Ausdruck zufällig gegen die aufgezeichnete Historie gehalten habe. Eine
+# Syntaxprüfung sagt nichts darüber, ob eine Regel das Richtige misst.
+#
+# Ausgeführt mit: make check-alerts
+rule_files:
+  - rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # --- HomeflowContainerMemoryNearLimit -------------------------------------
+  - interval: 1m
+    name: Container über 85 Prozent seines Limits meldet sich
+    input_series:
+      # 240 von 256 MiB = 94 Prozent, dauerhaft.
+      - series: 'container_memory_working_set_bytes{namespace="homeflow-monitoring",container="grafana"}'
+        values: '251658240x20'
+      - series: 'kube_pod_container_resource_limits{namespace="homeflow-monitoring",container="grafana",resource="memory"}'
+        values: '268435456x20'
+    alert_rule_test:
+      # Vor Ablauf von for: 10m darf nichts feuern - ein kurzer Ausschlag beim
+      # Start ist kein Befund (gemessen: Grafana geht beim Start eine Minute
+      # lang auf 91 Prozent).
+      - eval_time: 5m
+        alertname: HomeflowContainerMemoryNearLimit
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: HomeflowContainerMemoryNearLimit
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: ressourcen
+              namespace: homeflow-monitoring
+              container: grafana
+            # Der Text wird mitgeprüft, nicht nur das Feuern. Eine Beschreibung,
+            # die etwas anderes sagt als die Regel misst, ist genau der Fehler,
+            # gegen den dieses Ticket entstanden ist.
+            exp_annotations:
+              summary: "grafana nähert sich seinem Speicherlimit"
+              description: "homeflow-monitoring/grafana liegt seit 10 Minuten über 85 % seines Limits (93.75%). Oberhalb davon killt der Kernel den Container, statt ihn zu bremsen. Messwerte und Optionen je Komponente stehen in docs/operations/resource-budget.md."
+
+  - interval: 1m
+    name: Container knapp unter der Schwelle bleibt still
+    input_series:
+      # 210 von 256 MiB = 82 Prozent. Genau der Dauerzustand von Grafana nach
+      # dem Abschalten der ungenutzten Plugins.
+      - series: 'container_memory_working_set_bytes{namespace="homeflow-monitoring",container="grafana"}'
+        values: '220200960x30'
+      - series: 'kube_pod_container_resource_limits{namespace="homeflow-monitoring",container="grafana",resource="memory"}'
+        values: '268435456x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: HomeflowContainerMemoryNearLimit
+        exp_alerts: []
+
+  # --- HomeflowContainerWithoutMemoryLimit ----------------------------------
+  - interval: 1m
+    name: Container ohne Limit in einem homeflow-Namespace faellt auf
+    input_series:
+      - series: 'container_memory_working_set_bytes{namespace="homeflow",container="fremd"}'
+        values: '1000000x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: HomeflowContainerWithoutMemoryLimit
+        exp_alerts:
+          - exp_labels:
+              severity: info
+              component: ressourcen
+              namespace: homeflow
+              container: fremd
+            exp_annotations:
+              summary: "fremd läuft ohne Speicherlimit"
+              description: "homeflow/fremd hat kein Speicherlimit und ist damit BestEffort - der Host-Kernel tötet ihn zuerst. Limit setzen und contracts.md Abschnitt 2 mitziehen."
+
+  - interval: 1m
+    name: Container MIT Limit meldet sich nicht
+    input_series:
+      - series: 'container_memory_working_set_bytes{namespace="homeflow",container="api"}'
+        values: '1000000x40'
+      - series: 'kube_pod_container_resource_limits{namespace="homeflow",container="api",resource="memory"}'
+        values: '201326592x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: HomeflowContainerWithoutMemoryLimit
+        exp_alerts: []
+
+  # --- GrafanaUnexpectedDatasourcePlugin ------------------------------------
+  - interval: 1m
+    name: Ein zweites Datenquellen-Plugin faellt auf
+    input_series:
+      - series: 'grafana_plugin_build_info{plugin_id="prometheus",plugin_type="datasource"}'
+        values: '1x20'
+      - series: 'grafana_plugin_build_info{plugin_id="mysql",plugin_type="datasource"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: GrafanaUnexpectedDatasourcePlugin
+        exp_alerts:
+          - exp_labels:
+              severity: info
+              component: monitoring
+            exp_annotations:
+              summary: "Grafana lädt mehr Datenquellen-Plugins als die eine erwartete"
+              description: "Erwartet ist genau `prometheus`. Jedes weitere Plugin ist ein eigener Prozess und kostet Speicher. GF_PLUGINS_DISABLE_PLUGINS in monitoring/kubernetes/grafana.yaml ergänzen."
+
+  - interval: 1m
+    name: Genau eine Datenquelle ist der Sollzustand
+    input_series:
+      - series: 'grafana_plugin_build_info{plugin_id="prometheus",plugin_type="datasource"}'
+        values: '1x20'
+      # Frontend-Apps ohne eigenen Prozess zaehlen nicht mit - sie kosten
+      # keinen Speicher und stehen deshalb nicht in der Regel.
+      - series: 'grafana_plugin_build_info{plugin_id="grafana-advisor-app",plugin_type="app"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 18m
+        alertname: GrafanaUnexpectedDatasourcePlugin
+        exp_alerts: []

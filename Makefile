@@ -10,7 +10,7 @@ NAMESPACE := homeflow
 
 .DEFAULT_GOAL := help
 
-.PHONY: check-migrations check-resource-contract mirror mirror-setup ci-full deploy-verify monitoring-verify
+.PHONY: check-migrations check-resource-contract mirror mirror-setup ci-full deploy-verify monitoring-verify check-alerts
 .PHONY: help setup fmt fmt-check lint test ci mission-control mission-control-ci mission-control-install mission-control-status mission-control-logs mission-control-stop install-git-hooks frontend-test integration-test build frontend-build frontend-dev run dev down backup verify-backup docker-build docker-push kind-load manifests deploy status logs port-forward monitoring-manifests monitoring-deploy monitoring-status grafana-port-forward prometheus-port-forward grafana-password clean
 
 help: ## Show available commands
@@ -69,6 +69,7 @@ ci: ## Local CI: gofmt, vet, TypeScript, unit tests, both manifest renders, migr
 	@$(MAKE) --no-print-directory monitoring-manifests
 	@$(MAKE) --no-print-directory check-migrations
 	@$(MAKE) --no-print-directory check-resource-contract
+	@$(MAKE) --no-print-directory check-alerts
 	@$(MAKE) --no-print-directory mission-control-ci
 	@echo "ci: all checks passed (integration tests are separate: make integration-test)"
 
@@ -139,6 +140,10 @@ deploy: manifests kind-load ## Deploy after the homeflow-secrets Secret was manu
 	@kubectl -n $(NAMESPACE) get secret homeflow-secrets >/dev/null 2>&1 || { echo "Missing Secret homeflow-secrets; see README." >&2; exit 1; }
 	kubectl apply -k kubernetes/base
 	@./scripts/deploy-verify.sh
+
+check-alerts: ## Check the alert rules for syntax AND effect (promtool, throwaway container)
+	@echo "check-alerts:"
+	@./scripts/check-alerts.sh
 
 monitoring-verify: ## Check that every monitoring workload is actually ready
 	@./scripts/monitoring-verify.sh
