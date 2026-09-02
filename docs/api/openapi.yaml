@@ -1062,6 +1062,49 @@ paths:
         "200": { description: Updated medication, content: { application/json: { schema: { $ref: "#/components/schemas/PetMedication" } } } }
         "404": { description: Medication not found in caller household }
         "422": { description: Invalid exact quantity }
+  /api/v1/veterinarians:
+    get:
+      summary: List or match veterinarians in the caller household
+      operationId: listVeterinarians
+      parameters:
+        - { name: suche, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: practice, in: query, schema: { type: string, maxLength: 200 }, description: Candidate matching only; never an automatic decision }
+        - { name: postalCode, in: query, schema: { type: string, maxLength: 20 } }
+        - { name: after, in: query, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200": { description: Veterinarian page, content: { application/json: { schema: { $ref: "#/components/schemas/VeterinarianPage" } } } }
+    post:
+      summary: Create veterinarian
+      operationId: createVeterinarian
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/VeterinarianInput" } } } }
+      responses:
+        "201": { description: Created veterinarian, content: { application/json: { schema: { $ref: "#/components/schemas/Veterinarian" } } } }
+        "422": { description: Invalid veterinarian }
+  /api/v1/veterinarians/{vetId}:
+    parameters:
+      - { name: vetId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Get veterinarian
+      operationId: getVeterinarian
+      responses:
+        "200": { description: Veterinarian, content: { application/json: { schema: { $ref: "#/components/schemas/Veterinarian" } } } }
+        "404": { description: Veterinarian not found }
+    patch:
+      summary: Replace editable veterinarian fields
+      operationId: updateVeterinarian
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/VeterinarianInput" } } } }
+      responses:
+        "200": { description: Updated veterinarian, content: { application/json: { schema: { $ref: "#/components/schemas/Veterinarian" } } } }
+        "404": { description: Veterinarian not found }
+        "422": { description: Invalid veterinarian }
+    delete:
+      summary: Delete unreferenced veterinarian
+      operationId: deleteVeterinarian
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Veterinarian not found }
+        "409": { description: Veterinarian is still referenced }
 components:
   securitySchemes:
     bearerAuth:
@@ -1077,6 +1120,34 @@ components:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
   schemas:
+    VeterinarianInput:
+      type: object
+      additionalProperties: false
+      required: [practice]
+      properties:
+        practice: { type: string, minLength: 1, maxLength: 200 }
+        vetName: { type: string, maxLength: 200 }
+        street: { type: string, maxLength: 200 }
+        postalCode: { type: string, maxLength: 20 }
+        city: { type: string, maxLength: 120 }
+        phone: { type: string, maxLength: 60 }
+        email: { type: string, maxLength: 200 }
+        notes: { type: string, maxLength: 2000 }
+    Veterinarian:
+      allOf:
+        - $ref: "#/components/schemas/VeterinarianInput"
+        - type: object
+          required: [id, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    VeterinarianPage:
+      type: object
+      required: [veterinarians]
+      properties:
+        veterinarians: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/Veterinarian" } }
+        nextCursor: { type: string, format: uuid }
     MedicationRestockPreview:
       type: object
       additionalProperties: false
@@ -1251,6 +1322,7 @@ components:
         insurance: { type: string, maxLength: 200 }
         insuranceNumber: { type: string, maxLength: 100 }
         veterinarian: { type: string, maxLength: 200 }
+        primaryVetId: { type: string, format: uuid, description: Optional default veterinarian from the same household }
         notes: { type: string, maxLength: 2000 }
         active: { type: boolean, default: true }
     Pet:

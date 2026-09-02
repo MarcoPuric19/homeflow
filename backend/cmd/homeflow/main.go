@@ -23,6 +23,7 @@ import (
 	"homeflow/backend/internal/receipts"
 	"homeflow/backend/internal/reminders"
 	"homeflow/backend/internal/shopping"
+	"homeflow/backend/internal/vets"
 )
 
 func main() {
@@ -70,6 +71,7 @@ func run(logger *slog.Logger) error {
 	reminderService := reminders.NewService(reminders.NewPostgresRepository(pool))
 	calendarService := calendar.NewService(calendar.NewPostgresRepository(pool))
 	petService := pets.NewService(pets.NewPostgresRepository(pool))
+	vetService := vets.NewService(vets.NewPostgresRepository(pool))
 	linkService := links.NewService(links.NewPostgresRepository(pool))
 	handler := httpapi.NewFullWithOptions(logger, authService, authService, shoppingService, expenseService, receiptService, httpapi.BrowserCookieConfig{
 		Secure:    env("HOMEFLOW_COOKIE_SECURE", "false") == "true",
@@ -80,6 +82,7 @@ func run(logger *slog.Logger) error {
 		Documents: documentService,
 		Reminders: reminderService,
 		Links:     linkService,
+		Vets:      vetService,
 	})
 	server := &http.Server{
 		Addr:              env("HOMEFLOW_LISTEN_ADDR", ":8080"),

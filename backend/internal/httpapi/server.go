@@ -28,6 +28,7 @@ import (
 	"homeflow/backend/internal/receipts"
 	"homeflow/backend/internal/reminders"
 	"homeflow/backend/internal/shopping"
+	"homeflow/backend/internal/vets"
 )
 
 type Server struct {
@@ -40,6 +41,7 @@ type Server struct {
 	documents *documents.Service
 	reminders *reminders.Service
 	links     *links.Service
+	vets      *vets.Service
 	sessions  SessionService
 	limiter   *loginRateLimiter
 	handler   http.Handler
@@ -63,6 +65,7 @@ type BrowserCookieConfig struct {
 	Documents *documents.Service
 	Reminders *reminders.Service
 	Links     *links.Service
+	Vets      *vets.Service
 }
 
 type SessionService interface {
@@ -85,7 +88,7 @@ func NewFull(logger *slog.Logger, authenticator auth.Authenticator, sessions Ses
 
 func NewFullWithOptions(logger *slog.Logger, authenticator auth.Authenticator, sessions SessionService, shoppingService *shopping.Service, expenseService *expenses.Service, receiptService *receipts.Service, options BrowserCookieConfig) *Server {
 	s := &Server{logger: logger, shopping: shoppingService, expenses: expenseService, receipts: receiptService,
-		calendar: options.Calendar, pets: options.Pets, documents: options.Documents, reminders: options.Reminders, links: options.Links, sessions: sessions, limiter: newLoginRateLimiter(5, 15*time.Minute), cookies: options}
+		calendar: options.Calendar, pets: options.Pets, documents: options.Documents, reminders: options.Reminders, links: options.Links, vets: options.Vets, sessions: sessions, limiter: newLoginRateLimiter(5, 15*time.Minute), cookies: options}
 
 	public := http.NewServeMux()
 	public.HandleFunc("GET /health", s.health)
@@ -147,6 +150,13 @@ func NewFullWithOptions(logger *slog.Logger, authenticator auth.Authenticator, s
 		private.HandleFunc("POST /api/v1/pets/{petID}/lab-results", s.createLabResult)
 		private.HandleFunc("GET /api/v1/pets/{petID}/dashboard", s.petDashboard)
 		private.HandleFunc("GET /api/v1/pets/{petID}/timeline", s.petTimeline)
+	}
+	if options.Vets != nil {
+		private.HandleFunc("GET /api/v1/veterinarians", s.listVeterinarians)
+		private.HandleFunc("POST /api/v1/veterinarians", s.createVeterinarian)
+		private.HandleFunc("GET /api/v1/veterinarians/{vetID}", s.getVeterinarian)
+		private.HandleFunc("PATCH /api/v1/veterinarians/{vetID}", s.updateVeterinarian)
+		private.HandleFunc("DELETE /api/v1/veterinarians/{vetID}", s.deleteVeterinarian)
 	}
 	if options.Reminders != nil {
 		private.HandleFunc("GET /api/v1/reminders", s.listReminders)
@@ -614,6 +624,89 @@ func (s *Server) writePet(w http.ResponseWriter, pet pets.Pet, err error) {
 		s.internalError(w, err)
 	default:
 		writeJSON(w, http.StatusOK, pet)
+	}
+}
+
+func (s *Server) listVeterinarians(w http.ResponseWriter, r *http.Request) {
+	limit, err := strconv.Atoi(defaultString(r.URL.Query().Get("limit"), "50"))
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid query parameter")
+		return
+	}
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	var page vets.Page
+	if practice := r.URL.Query().Get("practice"); practice != "" {
+		matches, matchErr := s.vets.Match(r.Context(), principal.UserID, practice, r.URL.Query().Get("postalCode"))
+		if matchErr != nil {
+			s.writeVetError(w, matchErr)
+			return
+		}
+		page.Veterinarians = matches
+	} else {
+		page, err = s.vets.List(r.Context(), principal.UserID, r.URL.Query().Get("suche"), limit, r.URL.Query().Get("after"))
+		if err != nil {
+			s.writeVetError(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+func (s *Server) createVeterinarian(w http.ResponseWriter, r *http.Request) {
+	var input vets.Input
+	if decodeJSON(w, r, &input) != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	v, err := s.vets.Create(r.Context(), principal.UserID, input)
+	if err != nil {
+		s.writeVetError(w, err)
+		return
+	}
+	w.Header().Set("Location", "/api/v1/veterinarians/"+v.ID)
+	writeJSON(w, http.StatusCreated, v)
+}
+func (s *Server) getVeterinarian(w http.ResponseWriter, r *http.Request) {
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	v, err := s.vets.Get(r.Context(), principal.UserID, r.PathValue("vetID"))
+	if err != nil {
+		s.writeVetError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+func (s *Server) updateVeterinarian(w http.ResponseWriter, r *http.Request) {
+	var input vets.Input
+	if decodeJSON(w, r, &input) != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	v, err := s.vets.Update(r.Context(), principal.UserID, r.PathValue("vetID"), input)
+	if err != nil {
+		s.writeVetError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+func (s *Server) deleteVeterinarian(w http.ResponseWriter, r *http.Request) {
+	principal, _ := auth.PrincipalFromContext(r.Context())
+	if err := s.vets.Delete(r.Context(), principal.UserID, r.PathValue("vetID")); err != nil {
+		s.writeVetError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *Server) writeVetError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, vets.ErrInvalid):
+		writeProblem(w, http.StatusUnprocessableEntity, "Invalid veterinarian")
+	case errors.Is(err, vets.ErrNotFound):
+		writeProblem(w, http.StatusNotFound, "Veterinarian not found")
+	case errors.Is(err, vets.ErrReferenced):
+		writeProblem(w, http.StatusConflict, "Veterinarian is referenced")
+	default:
+		s.internalError(w, err)
 	}
 }
 

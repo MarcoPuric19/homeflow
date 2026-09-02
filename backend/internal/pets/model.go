@@ -23,6 +23,7 @@ type Pet struct {
 	Insurance            string    `json:"insurance,omitempty"`
 	InsuranceNumber      string    `json:"insuranceNumber,omitempty"`
 	Veterinarian         string    `json:"veterinarian,omitempty"`
+	PrimaryVetID         *string   `json:"primaryVetId,omitempty"`
 	Notes                string    `json:"notes,omitempty"`
 	Active               bool      `json:"active"`
 	CreatedAt            time.Time `json:"createdAt"`
@@ -41,6 +42,7 @@ type Input struct {
 	Insurance            string  `json:"insurance"`
 	InsuranceNumber      string  `json:"insuranceNumber"`
 	Veterinarian         string  `json:"veterinarian"`
+	PrimaryVetID         *string `json:"primaryVetId"`
 	Notes                string  `json:"notes"`
 	Active               *bool   `json:"active,omitempty"`
 }

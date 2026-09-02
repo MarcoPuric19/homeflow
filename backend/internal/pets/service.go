@@ -81,6 +81,14 @@ func (s *Service) normalise(input Input, creating bool) (Pet, error) {
 	breed, notes := strings.TrimSpace(input.Breed), strings.TrimSpace(input.Notes)
 	color, insurance := strings.TrimSpace(input.Color), strings.TrimSpace(input.Insurance)
 	insuranceNumber, veterinarian := strings.TrimSpace(input.InsuranceNumber), strings.TrimSpace(input.Veterinarian)
+	var primaryVetID *string
+	if input.PrimaryVetID != nil && strings.TrimSpace(*input.PrimaryVetID) != "" {
+		value := strings.TrimSpace(*input.PrimaryVetID)
+		if !id.IsUUID(value) {
+			return Pet{}, ErrInvalid
+		}
+		primaryVetID = &value
+	}
 	sex := input.Sex
 	if sex == "" {
 		sex = SexUnknown
@@ -116,5 +124,5 @@ func (s *Service) normalise(input Input, creating bool) (Pet, error) {
 		chip = &value
 	}
 	_ = creating
-	return Pet{Name: name, Species: species, Breed: breed, BirthDate: birthDate, ApproximateBirthDate: input.ApproximateBirthDate, Sex: sex, MicrochipNumber: chip, Color: color, Insurance: insurance, InsuranceNumber: insuranceNumber, Veterinarian: veterinarian, Notes: notes, Active: active}, nil
+	return Pet{Name: name, Species: species, Breed: breed, BirthDate: birthDate, ApproximateBirthDate: input.ApproximateBirthDate, Sex: sex, MicrochipNumber: chip, Color: color, Insurance: insurance, InsuranceNumber: insuranceNumber, Veterinarian: veterinarian, PrimaryVetID: primaryVetID, Notes: notes, Active: active}, nil
 }

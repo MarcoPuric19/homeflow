@@ -197,6 +197,7 @@ func (r *PostgresRepository) Complete(ctx context.Context, itemID, userID string
 	}
 	return Item{}, ErrAlreadyDone
 }
+
 // normalizeListID nimmt weiterhin "shared" entgegen: bestehende Aufrufer und
 // gespeicherte Anfragen sollen nicht brechen. Neue Aufrufer lassen das Feld
 // leer.

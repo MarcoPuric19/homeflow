@@ -22,6 +22,7 @@ import (
 	"homeflow/backend/internal/receipts"
 	"homeflow/backend/internal/reminders"
 	"homeflow/backend/internal/shopping"
+	"homeflow/backend/internal/vets"
 )
 
 func testPool(t *testing.T) *pgxpool.Pool {
@@ -81,13 +82,43 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := pets.NewService(pets.NewPostgresRepository(pool))
-	birthDate := "2021-04-01"
-	created, err := service.Create(ctx, alice, pets.Input{Name: "Momo", Species: "Katze", BirthDate: &birthDate, ApproximateBirthDate: true, Color: "Getigert", Insurance: "TierSchutz", InsuranceNumber: "TS-42", Veterinarian: "Praxis am Park"})
+	vetService := vets.NewService(vets.NewPostgresRepository(pool))
+	vet, err := vetService.Create(ctx, alice, vets.Input{Practice: "Tierzentrum am Schmelzbach", PostalCode: "12345", City: "Musterstadt"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !created.ApproximateBirthDate || created.Color != "Getigert" || created.InsuranceNumber != "TS-42" || created.Veterinarian != "Praxis am Park" {
+	if _, err := vetService.Get(ctx, bob, vet.ID); !errors.Is(err, vets.ErrNotFound) {
+		t.Fatalf("cross-household veterinarian read err=%v", err)
+	}
+	updatedVet, err := vetService.Update(ctx, alice, vet.ID, vets.Input{Practice: "Tierzentrum am Schmelzbach", VetName: "Dr. Beispiel", PostalCode: "12345", City: "Musterstadt"})
+	if err != nil || updatedVet.VetName != "Dr. Beispiel" {
+		t.Fatalf("updated veterinarian=%#v err=%v", updatedVet, err)
+	}
+	secondVet, err := vetService.Create(ctx, alice, vets.Input{Practice: "Kleintierpraxis Nord", PostalCode: "54321"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vetPage, err := vetService.List(ctx, alice, "", 1, "")
+	if err != nil || len(vetPage.Veterinarians) != 1 || vetPage.NextCursor == "" {
+		t.Fatalf("veterinarian page=%#v err=%v", vetPage, err)
+	}
+	if err := vetService.Delete(ctx, alice, secondVet.ID); err != nil {
+		t.Fatalf("delete unreferenced veterinarian: %v", err)
+	}
+	matches, err := vetService.Match(ctx, alice, "ENBEL-E6- axisfür Kleintiermedizin", "12345")
+	if err != nil || len(matches) != 1 || matches[0].ID != vet.ID {
+		t.Fatalf("veterinarian matches=%#v err=%v", matches, err)
+	}
+	birthDate := "2021-04-01"
+	created, err := service.Create(ctx, alice, pets.Input{Name: "Momo", Species: "Katze", BirthDate: &birthDate, ApproximateBirthDate: true, Color: "Getigert", Insurance: "TierSchutz", InsuranceNumber: "TS-42", Veterinarian: "Praxis am Park", PrimaryVetID: &vet.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created.ApproximateBirthDate || created.Color != "Getigert" || created.InsuranceNumber != "TS-42" || created.Veterinarian != "Praxis am Park" || created.PrimaryVetID == nil || *created.PrimaryVetID != vet.ID {
 		t.Fatalf("pet profile details=%#v", created)
+	}
+	if err := vetService.Delete(ctx, alice, vet.ID); !errors.Is(err, vets.ErrReferenced) {
+		t.Fatalf("referenced veterinarian delete err=%v", err)
 	}
 	updated, err := service.Update(ctx, alice, created.ID, pets.Input{Name: "Momo", Species: "Katze", BirthDate: &birthDate, Color: "Schwarz", Insurance: "TierSchutz", InsuranceNumber: "TS-43", Veterinarian: "Neue Praxis"})
 	if err != nil || updated.Color != "Schwarz" || updated.InsuranceNumber != "TS-43" || updated.ApproximateBirthDate {
@@ -249,7 +280,8 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 		t.Fatalf("appointment=%#v err=%v", appointment, err)
 	}
 	reminderService := reminders.NewService(reminders.NewPostgresRepository(pool))
-	reminderStart := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	reminderStart := today.AddDate(0, 0, 9).Add(9 * time.Hour)
 	reminderAppointment, err := reminderService.CreateAppointment(ctx, alice, firstVaccination.ID, reminders.AppointmentInput{Title: "Impftermin", StartsAt: reminderStart, EndsAt: reminderStart.Add(time.Hour), Visibility: "shared"})
 	if err != nil || reminderAppointment.PetID == "" || reminderAppointment.PetID != created.ID || reminderAppointment.AppointmentType == nil || *reminderAppointment.AppointmentType != calendar.AppointmentVaccination {
 		t.Fatalf("reminder appointment=%#v err=%v", reminderAppointment, err)
@@ -274,11 +306,12 @@ func TestPetHouseholdIsolationAndPagination(t *testing.T) {
 	if _, err := reminderService.ReplaceRules(ctx, alice, reminders.Rules{LeadDays: []int{9, 1}}); err != nil {
 		t.Fatal(err)
 	}
-	upcoming, err := reminderService.List(ctx, alice, "2026-09-30", 100)
+	reminderUntil := today.AddDate(0, 0, 30).Format(time.DateOnly)
+	upcoming, err := reminderService.List(ctx, alice, reminderUntil, 100)
 	if err != nil || len(upcoming) != 1 || upcoming[0].Kind != "appointment" || upcoming[0].LeadDays != 9 {
 		t.Fatalf("reminders=%#v err=%v", upcoming, err)
 	}
-	otherUpcoming, err := reminderService.List(ctx, bob, "2026-09-30", 100)
+	otherUpcoming, err := reminderService.List(ctx, bob, reminderUntil, 100)
 	if err != nil || len(otherUpcoming) != 0 {
 		t.Fatalf("cross-household reminders=%#v err=%v", otherUpcoming, err)
 	}

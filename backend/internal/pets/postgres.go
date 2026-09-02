@@ -16,12 +16,12 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-const petColumns = `p.id::text,p.name,p.species,p.breed,p.birth_date::text,p.approximate_birth_date,p.sex,p.microchip_number,p.color,p.insurance,p.insurance_number,p.veterinarian,p.notes,p.active,p.created_at,p.updated_at`
-const insertedPetColumns = `id::text,name,species,breed,birth_date::text,approximate_birth_date,sex,microchip_number,color,insurance,insurance_number,veterinarian,notes,active,created_at,updated_at`
+const petColumns = `p.id::text,p.name,p.species,p.breed,p.birth_date::text,p.approximate_birth_date,p.sex,p.microchip_number,p.color,p.insurance,p.insurance_number,p.veterinarian,p.primary_vet_id::text,p.notes,p.active,p.created_at,p.updated_at`
+const insertedPetColumns = `id::text,name,species,breed,birth_date::text,approximate_birth_date,sex,microchip_number,color,insurance,insurance_number,veterinarian,primary_vet_id::text,notes,active,created_at,updated_at`
 
 func scanPet(row pgx.Row) (Pet, error) {
 	var pet Pet
-	err := row.Scan(&pet.ID, &pet.Name, &pet.Species, &pet.Breed, &pet.BirthDate, &pet.ApproximateBirthDate, &pet.Sex, &pet.MicrochipNumber, &pet.Color, &pet.Insurance, &pet.InsuranceNumber, &pet.Veterinarian, &pet.Notes, &pet.Active, &pet.CreatedAt, &pet.UpdatedAt)
+	err := row.Scan(&pet.ID, &pet.Name, &pet.Species, &pet.Breed, &pet.BirthDate, &pet.ApproximateBirthDate, &pet.Sex, &pet.MicrochipNumber, &pet.Color, &pet.Insurance, &pet.InsuranceNumber, &pet.Veterinarian, &pet.PrimaryVetID, &pet.Notes, &pet.Active, &pet.CreatedAt, &pet.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Pet{}, ErrNotFound
 	}
@@ -31,12 +31,12 @@ func scanPet(row pgx.Row) (Pet, error) {
 func (r *PostgresRepository) Create(ctx context.Context, userID, createdBy string, pet Pet) (Pet, error) {
 	return outbox.Run(ctx, r.pool, func(tx pgx.Tx) (Pet, error) {
 		created, err := scanPet(tx.QueryRow(ctx, `INSERT INTO pets
-      (id,household_id,name,species,breed,birth_date,approximate_birth_date,sex,microchip_number,color,insurance,insurance_number,veterinarian,notes,active,created_by,created_at,updated_at)
-      SELECT $2,hm.household_id,$3,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
+      (id,household_id,name,species,breed,birth_date,approximate_birth_date,sex,microchip_number,color,insurance,insurance_number,veterinarian,primary_vet_id,notes,active,created_by,created_at,updated_at)
+      SELECT $2,hm.household_id,$3,$4,$5,$6::date,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
       FROM household_members hm WHERE hm.user_id=$1
 		RETURNING `+insertedPetColumns,
 			userID, pet.ID, pet.Name, pet.Species, pet.Breed, pet.BirthDate, pet.ApproximateBirthDate, pet.Sex,
-			pet.MicrochipNumber, pet.Color, pet.Insurance, pet.InsuranceNumber, pet.Veterinarian, pet.Notes, pet.Active, createdBy, pet.CreatedAt, pet.UpdatedAt))
+			pet.MicrochipNumber, pet.Color, pet.Insurance, pet.InsuranceNumber, pet.Veterinarian, pet.PrimaryVetID, pet.Notes, pet.Active, createdBy, pet.CreatedAt, pet.UpdatedAt))
 		if err != nil {
 			return Pet{}, err
 		}
@@ -84,11 +84,11 @@ func (r *PostgresRepository) Get(ctx context.Context, userID, petID string) (Pet
 func (r *PostgresRepository) Update(ctx context.Context, userID string, pet Pet) (Pet, error) {
 	return outbox.Run(ctx, r.pool, func(tx pgx.Tx) (Pet, error) {
 		updated, err := scanPet(tx.QueryRow(ctx, `UPDATE pets p SET name=$3,species=$4,breed=$5,birth_date=$6::date,
-      approximate_birth_date=$7,sex=$8,microchip_number=$9,color=$10,insurance=$11,insurance_number=$12,veterinarian=$13,notes=$14,active=$15,updated_at=$16
+      approximate_birth_date=$7,sex=$8,microchip_number=$9,color=$10,insurance=$11,insurance_number=$12,veterinarian=$13,primary_vet_id=$14,notes=$15,active=$16,updated_at=$17
       FROM household_members hm
       WHERE p.id=$2 AND hm.user_id=$1 AND hm.household_id=p.household_id
 		RETURNING `+petColumns, userID, pet.ID, pet.Name, pet.Species, pet.Breed, pet.BirthDate,
-			pet.ApproximateBirthDate, pet.Sex, pet.MicrochipNumber, pet.Color, pet.Insurance, pet.InsuranceNumber, pet.Veterinarian, pet.Notes, pet.Active, pet.UpdatedAt))
+			pet.ApproximateBirthDate, pet.Sex, pet.MicrochipNumber, pet.Color, pet.Insurance, pet.InsuranceNumber, pet.Veterinarian, pet.PrimaryVetID, pet.Notes, pet.Active, pet.UpdatedAt))
 		if err != nil {
 			return Pet{}, err
 		}

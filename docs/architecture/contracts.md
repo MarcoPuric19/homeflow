@@ -336,6 +336,7 @@ nicht ressourcenfrei.
 | Kalender-Textfelder | Titel 300, Beschreibung 2000, Kategorie 100, RRULE 500 Zeichen | `calendar/service.go`, Migration `000001` |
 | Benutzerkonten | **genau 2**, keine Registrierung | Migration `000002_user_limit` |
 | Pet-Listenabfrage | standardmäßig 50, maximal 100, Keyset-Cursor | `pets.Service` |
+| Tierarzt-Listenabfrage | standardmäßig 50, maximal 100, Keyset-Cursor; Kandidatensuche entscheidet nie automatisch | `vets.Service`, Migration `000022` |
 | Pet-Textfelder | Name 120, Tierart 80, Rasse 120, Farbe 100, Versicherung/Tierarzt 200, Versicherungsnummer 100, Notizen 2000 Zeichen | `pets.Service`, Migrationen `000003`, `000012` |
 | Patientenakte | standardmäßig 30, maximal 100 Einträge je Seite; Details max. 20 Schlüssel | `pets.Service`, Migration `000004` |
 | Impfverlauf | standardmäßig 30, maximal 100 Einträge je Seite; keine automatische Intervallberechnung | `pets.Service`, Migration `000005` |

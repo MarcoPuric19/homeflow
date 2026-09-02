@@ -24,6 +24,12 @@ is a reversible state transition; there is no destructive delete endpoint.
 Pet lists use bounded keyset pagination. Medical records, vaccinations and
 other pet subdomains will reference this aggregate in later increments.
 
+`Veterinarian` is a household-scoped practice/contact entity. A pet may point
+to one primary veterinarian for form defaults, while existing free-text
+veterinarian fields remain unchanged to avoid inventing entity assignments.
+Matching practice text returns bounded candidates only; users make the final
+selection. Referenced veterinarians cannot be deleted.
+
 `MedicalRecord` is one chronological timeline entry with a controlled type
 (`diagnosis`, `treatment`, `procedure`, `examination`, `note`, `imaging` or
 `report`), occurrence date, title, documented summary, optional veterinary
