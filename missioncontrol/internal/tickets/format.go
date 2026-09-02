@@ -25,6 +25,7 @@ func render(ticket Ticket) string {
 		{"melder", ticket.Reporter},
 		{"version", ticket.Version},
 		{"geliefert", ticket.Delivered},
+		{"geliefert_am", optionalTime(ticket.DeliveredAt)},
 		{"epic", ticket.Epic},
 		{"komponente", ticket.Component},
 		{"scope", strings.Join(ticket.Scope, ", ")},
@@ -93,6 +94,8 @@ func parse(key, content string) (Ticket, error) {
 				ticket.Reporter = value
 			case "version":
 				ticket.Version = value
+			case "geliefert_am":
+				ticket.DeliveredAt, _ = time.Parse(time.RFC3339, value)
 			case "geliefert":
 				ticket.Delivered = value
 			case "epic":
@@ -148,4 +151,13 @@ func splitComments(rest string) (string, []Comment) {
 		})
 	}
 	return body, comments
+}
+
+// optionalTime keeps an unset time an empty line rather than the zero date.
+// "0001-01-01" in a header reads like a value and is none.
+func optionalTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Format(time.RFC3339)
 }

@@ -126,8 +126,13 @@ type Ticket struct {
 	// claim membership in a release that had long since shipped.
 	Version   string `json:"version"`
 	Delivered string `json:"delivered,omitempty"`
-	Epic      string `json:"epic,omitempty"`
-	Component string `json:"component,omitempty"`
+	// DeliveredAt is when that release actually shipped. Without it a ticket can
+	// say in which version it went out but not when - und "angelegt am … bis
+	// ausgeliefert am …" ist genau die Frage, die ein Lebenslauf beantworten
+	// soll (MC-0021).
+	DeliveredAt time.Time `json:"-"`
+	Epic        string    `json:"epic,omitempty"`
+	Component   string    `json:"component,omitempty"`
 	// Scope names the files a ticket works on. It is what Austausch.md's claim
 	// table did by hand: a ticket in "In Bearbeitung" with a scope is a claim,
 	// and two such tickets on overlapping paths are a collision.
@@ -174,4 +179,54 @@ func cleanTags(tags []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ClaimStaleAfter is when a claim stops being work and starts being a lock.
+//
+// Am 2026-09-01 hing HF-0089 fünfzehn Stunden auf "In Bearbeitung" und HF-0104
+// zwölf, ohne dass jemand daran arbeitete. Beide sperrten Pfade, und niemandem
+// fiel es auf. Vier Stunden sind großzügig für eine Sitzung und kurz genug, dass
+// ein vergessener Claim über Nacht auffällt (MC-0021).
+const ClaimStaleAfter = 4 * time.Hour
+
+// ClaimStale answers whether this ticket holds a claim nobody is tending.
+// Only "In Bearbeitung" claims paths, so only it can go stale.
+func (t Ticket) ClaimStale(now time.Time) bool {
+	if t.Status != StatusActive {
+		return false
+	}
+	return now.Sub(t.UpdatedAt) > ClaimStaleAfter
+}
+
+// Lifecycle is what a ticket answers about itself: since when it exists, how
+// long it has been sitting where it is, and whether it ever shipped.
+type Lifecycle struct {
+	Created     time.Time  `json:"erstellt"`
+	Updated     time.Time  `json:"aktualisiert"`
+	Delivered   string     `json:"geliefert,omitempty"`
+	DeliveredAt *time.Time `json:"geliefertAm,omitempty"`
+	// DaysOpen counts from creation to delivery, or to now while it is open.
+	DaysOpen   int  `json:"tageOffen"`
+	ClaimStale bool `json:"claimVeraltet,omitempty"`
+}
+
+func (t Ticket) Life(now time.Time) Lifecycle {
+	ende := now
+	if !t.DeliveredAt.IsZero() {
+		ende = t.DeliveredAt
+	}
+	tage := int(ende.Sub(t.CreatedAt).Hours() / 24)
+	if tage < 0 {
+		tage = 0
+	}
+	life := Lifecycle{
+		Created: t.CreatedAt, Updated: t.UpdatedAt,
+		Delivered: t.Delivered,
+		DaysOpen:  tage, ClaimStale: t.ClaimStale(now),
+	}
+	if !t.DeliveredAt.IsZero() {
+		wann := t.DeliveredAt
+		life.DeliveredAt = &wann
+	}
+	return life
 }

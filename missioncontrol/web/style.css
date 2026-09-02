@@ -259,3 +259,24 @@ svg.hist .selection{fill:var(--accent);opacity:.22;pointer-events:none}
 .deploy-stand code{font-size:.95em}
 .waiting{display:flex;align-items:baseline;gap:.5rem}
 .waiting button{margin-left:auto}
+.board-tabs{display:flex;gap:.4rem;margin:.6rem 0 .2rem}
+.board-tab{padding:.35rem .9rem;border:1px solid var(--line);border-radius:5px;background:none;
+  color:var(--dim);cursor:pointer;font-size:.95em}
+.board-tab.active{color:var(--fg);border-color:var(--accent);background:rgba(255,255,255,.04)}
+.board-tab .count{margin-left:.4rem;opacity:.65;font-size:.85em}
+.board-warn{margin:.3rem 0;padding:.45rem .7rem;border-left:3px solid var(--warn);
+  background:rgba(255,180,0,.07);font-size:.9em}
+.board-warn code{margin-right:.2rem}
+.ticket .block{margin:.5rem 0;padding-top:.4rem;border-top:1px solid var(--line)}
+.ticket .block h4{margin:0 0 .35rem;font-size:.85em;color:var(--dim);font-weight:600;
+  text-transform:uppercase;letter-spacing:.04em}
+.ticket .body{white-space:pre-wrap;line-height:1.5;max-width:78ch}
+.ticket .comment{margin:.45rem 0;padding:.45rem .6rem;border-radius:4px;background:rgba(255,255,255,.03)}
+.ticket .comment-head{display:flex;gap:.6rem;align-items:baseline;margin-bottom:.25rem}
+.ticket .comment-head time{color:var(--dim);font-size:.85em}
+.ticket .comment-body{white-space:pre-wrap;line-height:1.5;max-width:78ch}
+.life{display:flex;flex-wrap:wrap;gap:.75rem;align-items:baseline;font-size:.85em;margin:.3rem 0}
+.life .dim{color:var(--dim)}
+.life .shipped{color:var(--ok)}
+.life .stale{color:var(--warn)}
+.unclaimed{color:var(--warn);font-size:.85em}

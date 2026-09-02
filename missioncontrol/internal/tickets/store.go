@@ -269,9 +269,20 @@ func (s *Store) SetVersion(key, version, author string) (Ticket, error) {
 
 // SetDelivered records which release actually shipped a ticket. Only a
 // deployment has that answer, which is why nothing sets it at creation time.
+// SetDelivered records both halves: which release shipped it and when. The date
+// comes from the store rather than the caller so that two tickets accepted by
+// the same run cannot disagree about it.
 func (s *Store) SetDelivered(key, version, author string) (Ticket, error) {
 	return s.setField(key, author, "Geliefert in", version, nil,
-		func(t *Ticket) string { return t.Delivered }, func(t *Ticket, v string) { t.Delivered = v })
+		func(t *Ticket) string { return t.Delivered },
+		func(t *Ticket, v string) {
+			t.Delivered = v
+			if v == "" {
+				t.DeliveredAt = time.Time{}
+				return
+			}
+			t.DeliveredAt = time.Now().UTC()
+		})
 }
 
 func (s *Store) SetPriority(key, priority, author string) (Ticket, error) {

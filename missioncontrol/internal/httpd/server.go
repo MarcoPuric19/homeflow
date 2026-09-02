@@ -198,7 +198,23 @@ func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
 		}
 		list = filtered
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tickets": list})
+	// Der Lebenslauf wird berechnet und nicht gespeichert: "seit wann offen" und
+	// "Claim veraltet" haengen an der Uhr, nicht an der Datei (MC-0021).
+	now := time.Now()
+	angereichert := make([]map[string]any, 0, len(list))
+	for _, ticket := range list {
+		raw, err := json.Marshal(ticket)
+		if err != nil {
+			continue
+		}
+		var felder map[string]any
+		if err := json.Unmarshal(raw, &felder); err != nil {
+			continue
+		}
+		felder["lebenslauf"] = ticket.Life(now)
+		angereichert = append(angereichert, felder)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tickets": angereichert})
 }
 
 func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {

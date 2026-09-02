@@ -562,9 +562,40 @@ function filterBar(target, onChange) {
     `${TICKETS.filter(matchesFilters).length} von ${TICKETS.length} Tickets sichtbar`));
 }
 
+// Zwei Boards statt eines gemischten. HF und MC sind zwei Produkte mit eigenen
+// Releases, eigenen Abläufen und eigener Versionierung; in einer Spalte
+// gemischt begraben 60 HF-Tickets die 20 MC-Tickets (MC-0021).
+let BOARD_PROJEKT = localStorage.getItem("mc.board.projekt") || "HF";
+
 function renderBoard() {
   filterBar($("#boardFilters"), renderBoard);
-  const visible = TICKETS.filter(matchesFilters);
+  const projekte = META.projekte.map((p) => p.key);
+  if (!projekte.includes(BOARD_PROJEKT)) BOARD_PROJEKT = projekte[0] ?? "HF";
+
+  // In einen eigenen Behälter rendern statt vor die Filterleiste zu hängen:
+  // eingefügt wird bei jedem Durchlauf, und ohne festen Platz vermehren sich
+  // die Reiter.
+  $("#boardTabs").replaceChildren(...projekte.map((key) => {
+    const offen = TICKETS.filter((t) => t.project === key && t.status !== "Fertig").length;
+    const tab = el("button", { class: "board-tab" + (key === BOARD_PROJEKT ? " active" : "") },
+      key, el("span", { class: "count" }, String(offen)));
+    tab.addEventListener("click", () => {
+      BOARD_PROJEKT = key;
+      localStorage.setItem("mc.board.projekt", key);
+      renderBoard();
+    });
+    return tab;
+  }));
+
+  const visible = TICKETS.filter((t) => t.project === BOARD_PROJEKT && matchesFilters(t));
+  const veraltet = visible.filter((t) => t.lebenslauf?.claimVeraltet);
+  $("#boardWarn").replaceChildren(...(veraltet.length
+    ? [el("p", { class: "board-warn" },
+        veraltet.length + " Claim(s) stehen seit über vier Stunden still: ",
+        ...veraltet.map((t) => el("code", {}, t.key + " ")),
+        " — ein Claim, an dem niemand arbeitet, sperrt Pfade ohne Zweck.")]
+    : []));
+
   $("#board").replaceChildren(...META.spalten.map((column) => {
     const inColumn = visible.filter((ticket) => ticket.status === column);
     const body = el("div", { class: "column-body" });
@@ -575,6 +606,7 @@ function renderBoard() {
       body);
   }));
 }
+
 
 // The backlog groups by epic, which is the only structure 53 imported tickets
 // have; everything else is grouped by type.
@@ -629,20 +661,66 @@ function ticketCard(ticket, compact) {
     ...((ticket.scope ?? []).length ? [el("span", { class: "tag scope", title: ticket.scope.join(", ") },
       "⛁ " + ticket.scope.length)] : []),
   ));
-  if (ticket.body) details.append(el("div", { class: "body" }, ticket.body));
-  for (const comment of ticket.comments ?? []) {
-    details.append(el("div", { class: "comment" },
-      el("b", {}, comment.author),
-      el("time", {}, new Date(comment.at).toLocaleString("de-DE")),
-      el("div", {}, comment.text)));
+  details.append(lifecycleRow(ticket));
+  if (ticket.body) {
+    details.append(el("section", { class: "block" },
+      el("h4", {}, "Beschreibung"),
+      el("div", { class: "body" }, ticket.body)));
   }
-  details.append(fieldRow(ticket), commentRow(ticket));
+  const comments = ticket.comments ?? [];
+  details.append(el("section", { class: "block" },
+    el("h4", {}, comments.length ? `Kommentare (${comments.length})` : "Kommentare"),
+    ...(comments.length
+      ? comments.map((comment) => el("div", { class: "comment" },
+          el("div", { class: "comment-head" },
+            el("b", {}, comment.author),
+            el("time", {}, new Date(comment.at).toLocaleString("de-DE"))),
+          el("div", { class: "comment-body" }, comment.text)))
+      : [el("p", { class: "hint" }, "Noch nichts festgehalten.")]),
+    commentRow(ticket)));
+  details.append(el("section", { class: "block" }, el("h4", {}, "Felder"), fieldRow(ticket)));
   return details;
+}
+
+// Der Lebenslauf beantwortet, was bisher nirgends stand: seit wann es das
+// Ticket gibt, wie lange es schon liegt, und ob es je ausgeliefert wurde -
+// mit Datum, nicht nur mit Versionsnummer (MC-0021).
+function lifecycleRow(ticket) {
+  const life = ticket.lebenslauf;
+  if (!life) return el("div", { class: "life" });
+  const datum = (value) => new Date(value).toLocaleDateString("de-DE");
+  const teile = [
+    el("span", {}, "angelegt " + datum(life.erstellt)),
+    ...(ticket.version ? [el("span", { class: "dim" }, "gefunden in " + ticket.version)] : []),
+  ];
+  if (life.geliefertAm) {
+    teile.push(el("span", { class: "shipped" },
+      "ausgeliefert " + datum(life.geliefertAm) + " in " + life.geliefert));
+    teile.push(el("span", { class: "dim" }, life.tageOffen + " Tage offen"));
+  } else if (life.geliefert) {
+    // Vor MC-0021 gesetzte Auslieferungen haben keine Datumsangabe. Das ist
+    // ehrlicher als ein erfundenes Datum.
+    teile.push(el("span", { class: "shipped" }, "ausgeliefert in " + life.geliefert));
+  } else {
+    teile.push(el("span", { class: "dim" }, "seit " + life.tageOffen + " Tagen offen"));
+  }
+  if (life.claimVeraltet) {
+    teile.push(el("span", { class: "stale" }, "Claim steht seit über vier Stunden still"));
+  }
+  return el("div", { class: "life" }, ...teile);
 }
 
 function fieldRow(ticket) {
   const change = (field, value) => act(() =>
     api(`/api/tickets/${ticket.key}/${field}`, jsonBody({ wert: value, author: author() })));
+  // Ein Ticket, das nicht auf "In Bearbeitung" steht, ist nicht beansprucht.
+  // Daran zu arbeiten ist erlaubt und war heute trotzdem ein Fehler, weil es
+  // niemand sah. Jetzt steht es da - als Hinweis, nicht als Sperre: die Regel
+  // gehoert zu den Menschen, die Sichtbarkeit zum Werkzeug (MC-0021).
+  const unbeansprucht = ticket.status !== "In Bearbeitung"
+    ? el("span", { class: "unclaimed", title: "Status ist " + ticket.status },
+        "nicht beansprucht")
+    : null;
   const picker = (field, current, options) => {
     const node = el("select", {}, ...options.map((value) =>
       el("option", value === current ? { selected: "selected" } : {}, value)));
@@ -663,7 +741,7 @@ function fieldRow(ticket) {
     picker("priority", ticket.priority, META.prioritaeten),
     picker("type", ticket.type, META.typen),
     picker("owner", ticket.owner, ["offen", ...AUTHORS]),
-    version, scope);
+    version, scope, ...(unbeansprucht ? [unbeansprucht] : []));
 }
 
 function commentRow(ticket) {
