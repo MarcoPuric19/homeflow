@@ -10,7 +10,7 @@ NAMESPACE := homeflow
 
 .DEFAULT_GOAL := help
 
-.PHONY: check-migrations check-resource-contract mirror mirror-setup
+.PHONY: check-migrations check-resource-contract mirror mirror-setup ci-full
 .PHONY: help setup fmt fmt-check lint test ci mission-control mission-control-ci mission-control-install mission-control-status mission-control-logs mission-control-stop install-git-hooks frontend-test integration-test build frontend-build frontend-dev run dev down backup verify-backup docker-build docker-push kind-load manifests deploy status logs port-forward monitoring-manifests monitoring-deploy monitoring-status grafana-port-forward prometheus-port-forward grafana-password clean
 
 help: ## Show available commands
@@ -53,9 +53,13 @@ test: ## Run unit and API tests
 frontend-test: ## Run web UI unit tests
 	cd frontend && npm run test
 
-integration-test: ## Run DB tests; requires HOMEFLOW_TEST_DATABASE_URL ending in _test
-	@test -n "$$HOMEFLOW_TEST_DATABASE_URL" || { echo "HOMEFLOW_TEST_DATABASE_URL is required." >&2; exit 1; }
+integration-test: ## Run DB tests against an existing HOMEFLOW_TEST_DATABASE_URL ending in _test
+	@test -n "$$HOMEFLOW_TEST_DATABASE_URL" || { echo "HOMEFLOW_TEST_DATABASE_URL is required. 'make ci-full' brings its own database." >&2; exit 1; }
 	cd backend && GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go test -race -v ./internal/integration
+
+ci-full: ## ci plus integration tests against a throwaway PostgreSQL that is torn down again
+	@$(MAKE) --no-print-directory ci
+	@./scripts/integration-db.sh $(MAKE) --no-print-directory integration-test
 
 ci: ## Local CI: gofmt, vet, TypeScript, unit tests, both manifest renders, migration and contract checks, Mission Control
 	@$(MAKE) --no-print-directory fmt-check
