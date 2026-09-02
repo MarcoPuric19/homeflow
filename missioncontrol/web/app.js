@@ -928,19 +928,46 @@ async function loadDeploy() {
 
     // Die Frage, die diese Ansicht bisher offen ließ: was wartet auf Abnahme,
     // und kann ein Deploy sie überhaupt geben?
-    const waiting = data.abnahme ?? [];
-    const acceptance = el("section", { class: "card" },
-      el("h2", {}, "Wartet auf Abnahme"),
-      el("p", { class: "hint" }, waiting.length
-        ? "Tickets in der Spalte Test. Ein erfolgreicher Deploy zieht nur die auf Fertig, deren Pfade er auch ausrollt."
-        : "Nichts steht auf Test."),
-      ...waiting.map((entry) => el("div", { class: "waiting" + (entry.pipeline ? "" : " unreachable") },
-        el("b", {}, entry.key),
-        el("span", { class: "titel" }, entry.titel),
-        el("span", { class: "tag" }, entry.zustaendig),
-        entry.pipeline
-          ? el("span", { class: "tag ok" }, "→ " + entry.pipeline)
-          : el("span", { class: "hint" }, entry.grund))));
+      const waiting = data.abnahme ?? [];
+      const acceptance = el("section", { class: "card" },
+        el("h2", {}, "Wartet auf Abnahme"),
+        el("p", { class: "hint" }, waiting.length
+          ? "Tickets in der Spalte Test. Ein erfolgreicher Deploy zieht nur die auf Fertig, deren Pfade er auch ausrollt \u2014 alle anderen nimmst du hier von Hand ab."
+          : "Nichts steht auf Test."),
+        ...waiting.map((entry) => {
+          // Eine Liste, die einen offenen Vorgang zeigt und keinen Weg anbietet,
+          // ihn zu schlie\u00dfen, ist eine Liste zum Anstarren. Acht Tickets, die
+          // kein Ablauf abdeckt, blieben genau deshalb stehen (MC-0020).
+          const abnehmen = el("button", { class: "quiet tiny" }, "abnehmen");
+          abnehmen.addEventListener("click", async () => {
+            abnehmen.setAttribute("disabled", "disabled");
+            await act2(async () => {
+              // Erst begr\u00fcnden, dann verschieben: ein Status, der sich unerkl\u00e4rt
+              // \u00e4ndert, ist schlimmer als einer von Hand.
+              await api(`/api/tickets/${entry.key}/comments`, jsonBody({
+                author: author(),
+                text: entry.pipeline
+                  ? "Von Hand abgenommen, obwohl der Ablauf \u201e" + entry.pipeline
+                    + "\u201c die Pfade abdeckt. Das Feld geliefert bleibt leer: "
+                    + "ausgeliefert wurde dabei nichts."
+                  : "Von Hand abgenommen. Kein Ablauf deckt diese Pfade ab \u2014 "
+                    + "die Abnahme war Lesen, nicht Ausliefern. Das Feld geliefert "
+                    + "bleibt deshalb leer.",
+              }));
+              await api(`/api/tickets/${entry.key}/status`, jsonBody({
+                wert: "Fertig", author: author(),
+              }));
+            });
+          });
+          return el("div", { class: "waiting" + (entry.pipeline ? "" : " unreachable") },
+            el("b", {}, entry.key),
+            el("span", { class: "titel" }, entry.titel),
+            el("span", { class: "tag" }, entry.zustaendig),
+            entry.pipeline
+              ? el("span", { class: "tag ok" }, "\u2192 " + entry.pipeline)
+              : el("span", { class: "hint" }, entry.grund),
+            abnehmen);
+        }));
 
     const cards = [pipelines, acceptance, restart];
     if (data.laufend) cards.push(runCard(data.laufend, !!running));

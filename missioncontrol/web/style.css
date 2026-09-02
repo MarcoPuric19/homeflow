@@ -257,3 +257,5 @@ svg.hist .selection{fill:var(--accent);opacity:.22;pointer-events:none}
 .deploy-stand{font-size:.85em;margin:.2rem 0 .35rem}
 .deploy-stand .dim{color:var(--dim)}
 .deploy-stand code{font-size:.95em}
+.waiting{display:flex;align-items:baseline;gap:.5rem}
+.waiting button{margin-left:auto}
