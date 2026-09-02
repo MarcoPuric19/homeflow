@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Sicherheitslücke melden
-    url: https://github.com/security/advisories
+    url: https://github.com/MarcoPuric19/homeflow/security/advisories/new
     about: Bitte nicht als öffentliches Issue — siehe SECURITY.md.

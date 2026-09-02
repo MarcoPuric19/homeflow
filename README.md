@@ -1,5 +1,10 @@
 # HomeFlow
 
+[![CI](https://github.com/MarcoPuric19/homeflow/actions/workflows/ci.yml/badge.svg)](https://github.com/MarcoPuric19/homeflow/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/MarcoPuric19/homeflow/actions/workflows/codeql.yml/badge.svg)](https://github.com/MarcoPuric19/homeflow/actions/workflows/codeql.yml)
+[![Supply chain](https://github.com/MarcoPuric19/homeflow/actions/workflows/supply-chain.yml/badge.svg)](https://github.com/MarcoPuric19/homeflow/actions/workflows/supply-chain.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 Private, API-first Haushaltsplattform für genau zwei Benutzer. Modularer
 Go-Monolith mit PostgreSQL, React/TypeScript-Oberfläche aus demselben Binary,
 betrieben auf einem Laptop in einem lokalen Kubernetes-Cluster.

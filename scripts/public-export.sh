@@ -322,7 +322,7 @@ Der Klon liegt unter $ZIEL und hat absichtlich kein Remote.
 Veröffentlichen machst du selbst - bewusst nicht dieses Skript:
 
     cd $ZIEL
-    git remote add origin git@github.com:<konto>/<repo>.git
+    git remote add origin git@github.com:MarcoPuric19/homeflow.git
     git push -u origin main
 
 Vorher lohnt ein letzter eigener Blick:
