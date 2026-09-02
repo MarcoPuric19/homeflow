@@ -24,8 +24,16 @@ AUSSCHLUSS=(
   "AGENTS.md"
   "CLAUDE.md"
   "Austausch.md"
-  # "missioncontrol/tickets"   # <- eine Zeile, falls die Tickets doch weg sollen
 )
+
+# Tickets: veroeffentlicht wird erst ab F6 (Epic HF-0114, die Haustierakte).
+# Alles davor gehoert zur Haushalts-Vorgeschichte, die MC-Tickets sind die
+# Werkzeugentwicklung. Marco am 2026-09-02.
+#
+# 0 heisst: keine Ticketdatei wird ausgeschlossen.
+TICKET_AB=114
+# Ganze Ticketfamilien, die unabhaengig von der Nummer fliegen:
+TICKET_PRAEFIX_RAUS="MC"
 
 # Trailer, die aus jeder Commit-Nachricht entfernt werden.
 # Woertliche Ersetzungen ueber die gesamte Historie. Gitignoriert, weil die
@@ -89,6 +97,31 @@ for p in "${AUSSCHLUSS[@]}"; do
   pfad_argumente+=(--path "$p")
 done
 
+# Ticketdateien aus der VOLLSTAENDIGEN Historie sammeln, nicht aus dem
+# Arbeitsbaum: ein Ticket, das zwischendurch existierte und wieder verschwand,
+# steckt weiterhin in alten Commits.
+ticket_raus=0
+if [ "$TICKET_AB" -gt 0 ] || [ -n "$TICKET_PRAEFIX_RAUS" ]; then
+  while IFS= read -r datei; do
+    name="$(basename "$datei" .md)"
+    praefix="${name%%-*}"
+    nummer="${name##*-}"
+    raus=0
+    case " $TICKET_PRAEFIX_RAUS " in *" $praefix "*) raus=1 ;; esac
+    case "$nummer" in
+      ''|*[!0-9]*) : ;;
+      *) [ "$praefix" = "HF" ] && [ "$TICKET_AB" -gt 0 ] \
+           && [ "$((10#$nummer))" -lt "$TICKET_AB" ] && raus=1 ;;
+    esac
+    if [ "$raus" -eq 1 ]; then
+      pfad_argumente+=(--path "$datei")
+      ticket_raus=$((ticket_raus + 1))
+    fi
+  done <<< "$(git log --all --pretty=format: --name-only \
+              | grep -E '^missioncontrol/tickets/[A-Z]+-[0-9]+\.md$' | sort -u)"
+  info "Ticketauswahl: $ticket_raus Datei(en) fliegen (HF unter $TICKET_AB, Praefix: $TICKET_PRAEFIX_RAUS)"
+fi
+
 info "Entferne ${#AUSSCHLUSS[@]} Pfad(e) aus jeder Version ..."
 git filter-repo --quiet --force --invert-paths "${pfad_argumente[@]}"
 
@@ -141,6 +174,34 @@ for p in "${AUSSCHLUSS[@]}"; do
     info "sauber: $p"
   fi
 done
+
+# Die Ticketauswahl wird eigenstaendig nachgeprueft: die Pfade entstehen
+# generiert, und eine generierte Liste ist genau so gut wie ihre Kontrolle.
+ticket_rest="$(printf '%s\n' "$alle_dateien" \
+  | grep -E '^missioncontrol/tickets/[A-Z]+-[0-9]+\.md$' || true)"
+ticket_falsch=0
+if [ -n "$ticket_rest" ]; then
+  while IFS= read -r datei; do
+    [ -z "$datei" ] && continue
+    name="$(basename "$datei" .md)"
+    praefix="${name%%-*}"; nummer="${name##*-}"
+    case " $TICKET_PRAEFIX_RAUS " in
+      *" $praefix "*) rot "  NOCH VORHANDEN (Praefix ausgeschlossen): $datei"; ticket_falsch=1 ;;
+    esac
+    case "$nummer" in
+      ''|*[!0-9]*) : ;;
+      *) if [ "$praefix" = "HF" ] && [ "$TICKET_AB" -gt 0 ] \
+            && [ "$((10#$nummer))" -lt "$TICKET_AB" ]; then
+           rot "  NOCH VORHANDEN (unter $TICKET_AB): $datei"; ticket_falsch=1
+         fi ;;
+    esac
+  done <<< "$ticket_rest"
+fi
+if [ "$ticket_falsch" -eq 1 ]; then
+  fehler=1
+else
+  info "sauber: Ticketauswahl ($(printf '%s\n' "$ticket_rest" | grep -c . || true) Tickets bleiben)"
+fi
 
 if [ -f "$SCHWAERZUNGEN" ]; then
   grep -vE '^[[:space:]]*(#|$)' "$SCHWAERZUNGEN" | while IFS= read -r zeile; do
