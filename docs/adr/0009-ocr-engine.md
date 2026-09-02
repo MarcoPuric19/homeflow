@@ -97,6 +97,13 @@ patient line with name, species, breed, date of birth and chip number:
     12.08.2026 Patient: Katze (Mischling) Mila (Geb:03.04.2021) (Chip: 2760…)
     Summe Brutto | 112,40 €
 
+> **Redacted.** The benchmark ran against real veterinary invoices. The animal
+> name, date of birth, chip prefix and amounts shown above were replaced with
+> the synthetic values used in `backend/internal/ocr/testdata/` before this
+> repository was published (HF-0145). The recognition behaviour being
+> documented — the misread year, the confused characters, the decimal
+> separator — is unaffected; only the identifying values changed.
+
 Two documents fail. One is a phone **screenshot** rather than a photo of a
 receipt — the recognised text is the status bar and the navigation bar, so there
 was never receipt content to read. The other yields a practice name but no date.
