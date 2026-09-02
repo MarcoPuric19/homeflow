@@ -34,3 +34,6 @@ coverage.html
 *.tfstate.*
 *.tfplan
 .terraform.lock.hcl
+
+# Lokale Schwaerzungsregeln fuer den oeffentlichen Export (HF-0145)
+redactions.local.txt

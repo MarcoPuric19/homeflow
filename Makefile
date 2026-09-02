@@ -1,9 +1,10 @@
 SHELL := /bin/sh
 
 APP := homeflow
-VERSION ?= 0.15.11
+VERSION ?= 0.15.12
 REGISTRY ?= localhost:5000
 IMAGE := $(REGISTRY)/homeflow/api:$(VERSION)
+WORKER_IMAGE := $(REGISTRY)/homeflow/ocr:$(VERSION)
 GO_CACHE := $(CURDIR)/.cache/go-build
 GO_MOD_CACHE := $(CURDIR)/.cache/go-mod
 NAMESPACE := homeflow
@@ -69,6 +70,7 @@ ci: ## Local CI: gofmt, vet, TypeScript, unit tests, both manifest renders, migr
 	@$(MAKE) --no-print-directory monitoring-manifests
 	@$(MAKE) --no-print-directory check-migrations
 	@$(MAKE) --no-print-directory check-resource-contract
+	@$(MAKE) --no-print-directory check-licenses
 	@$(MAKE) --no-print-directory check-alerts
 	@$(MAKE) --no-print-directory mission-control-ci
 	@echo "ci: all checks passed (integration tests are separate: make integration-test)"
@@ -100,6 +102,7 @@ install-git-hooks: ## Install the optional pre-push hook that runs 'make ci'
 build: frontend-build ## Build the local API binary and web UI
 	mkdir -p bin
 	cd backend && GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) CGO_ENABLED=0 go build -trimpath -o ../bin/$(APP) ./cmd/homeflow
+	cd backend && GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) CGO_ENABLED=0 go build -trimpath -o ../bin/homeflow-worker ./cmd/worker
 
 frontend-build: ## Build the static local web UI
 	cd frontend && npm run build
@@ -123,15 +126,18 @@ verify-backup: ## Verify BACKUP_DIR checksums and archive structure
 	@test -n "$(BACKUP_DIR)" || { echo "Usage: make verify-backup BACKUP_DIR=backups/<timestamp>" >&2; exit 1; }
 	./scripts/verify-backup.sh "$(BACKUP_DIR)"
 
-docker-build: ## Build the API image
+docker-build: ## Build the API and OCR worker images
 	docker build -f docker/Dockerfile --build-arg VERSION=$(VERSION) -t $(IMAGE) .
+	docker build -f docker/ocr/Dockerfile --target betrieb -t $(WORKER_IMAGE) .
 
 docker-push: ## Push to the existing local registry
 	docker push $(IMAGE)
+	docker push $(WORKER_IMAGE)
 
 kind-load: ## Load the local image directly into kind-dev (avoids node localhost mismatch)
 	@test "$$(kubectl config current-context)" = "kind-dev" || { echo "Refusing: current context is not kind-dev" >&2; exit 1; }
 	kind load docker-image $(IMAGE) --name dev
+	kind load docker-image $(WORKER_IMAGE) --name dev
 
 manifests: ## Render Kubernetes resources locally
 	kubectl kustomize kubernetes/base >/dev/null
@@ -187,6 +193,13 @@ clean: ## DESTRUCTIVE only for generated build/cache files; preserves DB and rec
 check-migrations: ## Check migration numbering against contracts.md 1.3 (no database needed)
 	@echo "check-migrations:"
 	@./scripts/check-migrations.sh
+
+check-publication: ## Audit the history before publishing (secrets, redactions, excluded paths)
+	@./scripts/check-publication.sh
+
+check-licenses: ## Check that every dependency is recorded in docs/legal/dependencies.md
+	@echo "check-licenses:"
+	@./scripts/check-licenses.sh
 
 check-resource-contract: ## Check contracts.md 2.1 against the rendered manifests and against allocatable
 	@echo "check-resource-contract:"
