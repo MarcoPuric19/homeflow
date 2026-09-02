@@ -160,6 +160,23 @@ func (r *Runner) execute(ctx context.Context, cancel context.CancelFunc, pipelin
 			return
 		}
 	}
+
+	// Alle Schritte grün heißt: vier Kommandos sind ohne Fehler gelaufen. Es
+	// heißt nicht, dass etwas ausgeliefert wurde - am 2026-09-02 war genau das
+	// der Unterschied (MC-0019). Wer den Cluster verändert, wird gefragt.
+	if pipeline.Verify != nil {
+		r.append(run, LogLine{At: time.Now(), Step: pipeline.Verify.Name,
+			Text: "→ make " + strings.Join(pipeline.Verify.Args, " ")})
+		r.setStep(run, pipeline.Verify.Name)
+		if err := r.runStep(ctx, run, *pipeline.Verify); err != nil {
+			r.append(run, LogLine{At: time.Now(), Step: pipeline.Verify.Name,
+				Text: "Nachprüfung fehlgeschlagen: im Cluster ist nichts angekommen. " +
+					"Der Lauf gilt als fehlgeschlagen, obwohl alle Schritte erfolgreich waren.",
+				Err: true})
+			r.finish(run, "fehlgeschlagen")
+			return
+		}
+	}
 	r.finish(run, "erfolgreich")
 }
 

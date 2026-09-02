@@ -250,6 +250,15 @@ func (s *Server) afterDeploy(run deploy.Run) {
 		return
 	}
 	pipeline, ok := deploy.Find(run.Pipeline)
+	// Ein Ablauf, der den Cluster verändert, aber keine Nachprüfung mitbringt,
+	// nimmt nichts ab. Sonst hängt die Abnahme daran, dass zufällig ein
+	// make-Ziel nachsieht - genau so sind am 2026-09-02 sechs Tickets auf
+	// Fertig gelandet, ohne dass etwas ausgeliefert war (MC-0019).
+	if ok && pipeline.NeedsCluster && pipeline.Verify == nil {
+		s.logger.Warn("Abnahme übersprungen: Ablauf ohne Nachprüfung",
+			"pipeline", run.Pipeline, "tickets", run.Tickets)
+		return
+	}
 	// Das Kriterium ist nicht "braucht einen Cluster", sondern "trägt etwas in
 	// ein laufendes System". Sonst nimmt der Ablauf, der das Cockpit selbst
 	// baut, nie etwas ab - genau das ist beim ersten echten Durchlauf passiert.

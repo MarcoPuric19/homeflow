@@ -97,7 +97,44 @@ func (r *Runner) compareVersion(ctx context.Context, assessment *Assessment) {
 	case running != wanted:
 		assessment.Changes = append(assessment.Changes, Difference{
 			Kind: "Version", Detail: "Cluster " + running + " → Repository " + wanted})
+		return
 	}
+
+	// Gleicher Tag heißt nicht gleicher Inhalt. Am 2026-09-02 liefen unter
+	// `0.15.11` drei verschiedene Images - lokal, im Node und im Pod -, und
+	// diese Prüfung meldete „nichts zu tun", während der Pod fünfzehn Stunden
+	// alten Code fuhr (MC-0019, HF-0135).
+	//
+	// Die inhaltliche Antwort steht in scripts/deploy-verify.sh; sie hier zu
+	// wiederholen hieße, zwei Wahrheiten über denselben Zustand zu pflegen.
+	r.compareImageContent(ctx, assessment)
+}
+
+// compareImageContent fragt das Prüfskript, ob der laufende Pod dasselbe Image
+// benutzt, das im Node liegt. Ein Fehlschlag des Skripts selbst - kein Docker,
+// kein Node - ist kein Befund und bleibt still: die Änderungserkennung soll
+// nichts behaupten, was sie nicht wissen kann.
+func (r *Runner) compareImageContent(ctx context.Context, assessment *Assessment) {
+	assessment.Checked = append(assessment.Checked, "Image-Inhalt im Pod gegen den Node")
+	script := filepath.Join(r.root, "scripts", "deploy-verify.sh")
+	if _, err := os.Stat(script); err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, script, "--pruefen")
+	cmd.Dir = r.root
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return
+	}
+	if !strings.Contains(string(out), "Abweichung") {
+		return
+	}
+	assessment.Changes = append(assessment.Changes, Difference{
+		Kind: "Image",
+		Detail: "Gleicher Tag, anderer Inhalt: der Pod läuft nicht auf dem Image, " +
+			"das im Node liegt. Ein Deploy rollt es aus."})
 }
 
 // compareManifests asks kubectl itself. Only the names of the affected objects

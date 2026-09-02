@@ -31,10 +31,19 @@ type Pipeline struct {
 	Title       string `json:"titel"`
 	Description string `json:"beschreibung"`
 	// NeedsCluster makes the run refuse unless kubectl points at kind-dev.
-	NeedsCluster bool          `json:"brauchtCluster"`
-	Steps        []Step        `json:"schritte"`
-	Covers       []string      `json:"deckt_ab"`
-	Timeout      time.Duration `json:"-"`
+	NeedsCluster bool   `json:"brauchtCluster"`
+	Steps        []Step `json:"schritte"`
+	// Verify runs after every step succeeded and asks the cluster whether
+	// anything actually arrived. It is a separate field and not just another
+	// step, because a run without it must not accept tickets.
+	//
+	// The reason is MC-0019: on 2026-09-02 a run reported success, moved six
+	// tickets to done and wrote a journal entry - and had delivered nothing.
+	// Every step had exited zero. A green run is a statement about four
+	// commands, not a proof.
+	Verify  *Step         `json:"nachpruefung,omitempty"`
+	Covers  []string      `json:"deckt_ab"`
+	Timeout time.Duration `json:"-"`
 }
 
 // Pipelines is the allowlist. Adding one is a code change and a review; that is
@@ -55,6 +64,7 @@ func Pipelines() []Pipeline {
 				{Name: "In den Cluster laden", Args: []string{"kind-load"}},
 				{Name: "Anwenden", Args: []string{"deploy"}},
 			},
+			Verify: &Step{Name: "Nachprüfen", Args: []string{"deploy-verify"}},
 		},
 		{
 			Name:         "monitoring",
@@ -67,6 +77,7 @@ func Pipelines() []Pipeline {
 				{Name: "Manifeste rendern", Args: []string{"monitoring-manifests"}},
 				{Name: "Anwenden", Args: []string{"monitoring-deploy"}},
 			},
+			Verify: &Step{Name: "Nachprüfen", Args: []string{"monitoring-verify"}},
 		},
 		{
 			Name:  "missioncontrol",

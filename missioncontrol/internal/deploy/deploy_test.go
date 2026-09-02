@@ -499,3 +499,64 @@ func TestJournalIgnoresABrokenFile(t *testing.T) {
 		t.Fatal("a broken journal must report nothing, not something")
 	}
 }
+
+// MC-0019: der Fall, den es am 2026-09-02 wirklich gab. Alle Schritte grün,
+// im Cluster nichts angekommen - und der Lauf hat sechs Tickets abgenommen.
+// Ein grüner Lauf ist eine Aussage über Kommandos, kein Nachweis.
+func TestRunFailsWhenVerificationFailsDespiteGreenSteps(t *testing.T) {
+	root := t.TempDir()
+	// /bin/true für die Schritte, /bin/false für die Nachprüfung: genau die
+	// Konstellation "alles erfolgreich, nichts ausgeliefert".
+	runner := NewRunner(root, "/bin/true", "/bin/true")
+	pipeline := Pipeline{
+		Name: "probe", Title: "Probe", NeedsCluster: false,
+		Steps:   []Step{{Name: "Anwenden", Args: []string{"deploy"}}},
+		Verify:  &Step{Name: "Nachprüfen", Args: []string{"deploy-verify"}},
+		Timeout: time.Minute,
+	}
+
+	run := Run{ID: 1, Pipeline: pipeline.Name, Started: time.Now()}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	runner.make = "/bin/true"
+	// Der Runner ruft dasselbe Binary für Schritte und Nachprüfung auf, also
+	// wird über das Argument unterschieden: ein Wrapper, der bei
+	// "deploy-verify" scheitert.
+	wrapper := filepath.Join(root, "make")
+	script := "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = deploy-verify ] && exit 1; done\nexit 0\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner.make = wrapper
+
+	runner.execute(ctx, cancel, pipeline, &run)
+	if run.Status != "fehlgeschlagen" {
+		t.Fatalf("status=%q, want fehlgeschlagen - alle Schritte grün, Nachprüfung rot", run.Status)
+	}
+	var erklaert bool
+	for _, line := range run.Lines {
+		if line.Err && strings.Contains(line.Text, "im Cluster ist nichts angekommen") {
+			erklaert = true
+		}
+	}
+	if !erklaert {
+		t.Fatalf("der Fehlschlag muss erklärt sein, Zeilen: %#v", run.Lines)
+	}
+}
+
+// Und die Gegenrichtung: mit bestandener Nachprüfung bleibt der Lauf grün.
+func TestRunStaysGreenWhenVerificationPasses(t *testing.T) {
+	root := t.TempDir()
+	runner := NewRunner(root, "/bin/true", "/bin/true")
+	pipeline := Pipeline{
+		Name: "probe", Title: "Probe",
+		Steps:   []Step{{Name: "Anwenden", Args: []string{"deploy"}}},
+		Verify:  &Step{Name: "Nachprüfen", Args: []string{"deploy-verify"}},
+		Timeout: time.Minute,
+	}
+	run := Run{ID: 1, Pipeline: pipeline.Name, Started: time.Now()}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	runner.execute(ctx, cancel, pipeline, &run)
+	if run.Status != "erfolgreich" {
+		t.Fatalf("status=%q, want erfolgreich", run.Status)
+	}
+}
