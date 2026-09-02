@@ -196,6 +196,7 @@ type Ticket struct {
 	Comments  []Comment  `json:"comments"`
 	Events    []Event    `json:"events"`
 	Relations []Relation `json:"relations"`
+	DoD       []int      `json:"dod"`
 }
 
 // Done reports whether a ticket still needs attention. Records are archive by

@@ -2,6 +2,7 @@ package tickets
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -36,6 +37,7 @@ func render(ticket Ticket) string {
 		{"scope", strings.Join(ticket.Scope, ", ")},
 		{"tags", strings.Join(ticket.Tags, ", ")},
 		{"beziehungen", renderRelations(ticket.Relations)},
+		{"dod", renderDoD(ticket.DoD)},
 		{"erstellt", ticket.CreatedAt.Format(time.RFC3339)},
 		{"aktualisiert", ticket.UpdatedAt.Format(time.RFC3339)},
 	} {
@@ -134,6 +136,8 @@ func parse(key, content string) (Ticket, error) {
 				ticket.Tags = cleanTags(strings.Split(value, ","))
 			case "beziehungen":
 				ticket.Relations = parseRelations(value)
+			case "dod":
+				ticket.DoD = parseDoD(value)
 			case "erstellt":
 				ticket.CreatedAt, _ = time.Parse(time.RFC3339, value)
 			case "aktualisiert":
@@ -169,6 +173,9 @@ func parse(key, content string) (Ticket, error) {
 	if ticket.Relations == nil {
 		ticket.Relations = []Relation{}
 	}
+	if ticket.DoD == nil {
+		ticket.DoD = []int{}
+	}
 	return ticket, nil
 }
 
@@ -179,6 +186,32 @@ func parse(key, content string) (Ticket, error) {
 // renderRelations writes "blockiert MC-0027, hängt ab von MC-0025". The kind
 // comes first because it reads as a sentence, and because a key alone would not
 // say what the link means.
+// renderDoD writes the manually confirmed points as "3, 5". The automatic ones
+// are never stored: they are derived on every read, so they cannot go stale.
+func renderDoD(points []int) string {
+	parts := make([]string, 0, len(points))
+	for _, nr := range points {
+		parts = append(parts, strconv.Itoa(nr))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func parseDoD(value string) []int {
+	points := []int{}
+	seen := map[int]bool{}
+	for _, entry := range strings.Split(value, ",") {
+		nr, err := strconv.Atoi(strings.TrimSpace(entry))
+		// 1 und 6 werden abgeleitet, nie gelesen - sonst koennte eine
+		// handgeschriebene Zeile einen automatischen Haken vortaeuschen.
+		if err != nil || nr < 1 || nr > 7 || nr == 1 || nr == 6 || seen[nr] {
+			continue
+		}
+		seen[nr] = true
+		points = append(points, nr)
+	}
+	return points
+}
+
 func renderRelations(relations []Relation) string {
 	parts := make([]string, 0, len(relations))
 	for _, r := range relations {

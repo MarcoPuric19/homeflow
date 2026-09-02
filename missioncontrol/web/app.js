@@ -688,10 +688,40 @@ function ticketCard(ticket, compact) {
           el("div", { class: "comment-body" }, comment.text)))
       : [el("p", { class: "hint" }, "Noch nichts festgehalten.")]),
     commentRow(ticket)));
+  details.append(dodBlock(ticket));
   details.append(beziehungenBlock(ticket));
   details.append(protokollBlock(ticket));
   details.append(el("section", { class: "block" }, el("h4", {}, "Felder"), fieldRow(ticket)));
   return details;
+}
+
+// Die sieben Punkte der Ticket-Regel aus AGENTS.md. Punkt 1 und 6 leitet das
+// Cockpit selbst ab und laesst sie deshalb nicht anklicken - ein Haken, den ein
+// Mensch auch von Hand setzen koennte, waere kein Beleg mehr (MC-0027).
+function dodBlock(ticket) {
+  const punkte = ticket.dod_punkte ?? [];
+  if (!punkte.length) return el("section", { class: "block" });
+  const offen = punkte.filter((p) => !p.erfuellt).length;
+  const zeile = (p) => {
+    const box = el("input", { type: "checkbox" });
+    box.checked = p.erfuellt;
+    if (p.automatisch) {
+      box.disabled = true;
+      box.title = "Vom Cockpit abgeleitet, nicht von Hand setzbar";
+    } else {
+      box.addEventListener("change", () => act(() =>
+        api(`/api/tickets/${ticket.key}/dod`,
+          jsonBody({ nr: p.nr, erfuellt: box.checked, author: author() }))));
+    }
+    return el("li", { class: p.erfuellt ? "dod-punkt erfuellt" : "dod-punkt" },
+      box,
+      el("span", { class: "dod-titel" }, `${p.nr}. ${p.titel}`),
+      p.automatisch ? el("span", { class: "dod-auto" }, "automatisch") : null,
+      p.hinweis ? el("span", { class: "dod-hinweis" }, p.hinweis) : null);
+  };
+  return el("section", { class: "block" },
+    el("h4", {}, offen ? `Definition of Done (${offen} offen)` : "Definition of Done"),
+    el("ul", { class: "dod" }, ...punkte.map(zeile)));
 }
 
 // Beziehungen werden immer beidseitig geschrieben - der Server lehnt
@@ -792,6 +822,15 @@ function fieldRow(ticket) {
     // weiss der Mensch mehr als der Graph. Es soll nur niemand versehentlich
     // tun (MC-0026).
     const blocker = ticket.offene_blocker ?? [];
+    const offeneDoD = ticket.offene_dod ?? [];
+    if (field === "status" && value === "Fertig" && offeneDoD.length) {
+      const weiter = window.confirm(
+        `Offene Punkte der Ticket-Regel: ${offeneDoD.join(", ")}\n\n` +
+        `Trotzdem auf Fertig schieben?`);
+      if (!weiter) {
+        return;
+      }
+    }
     if (field === "status" && value === "In Bearbeitung" && blocker.length) {
       const weiter = window.confirm(
         `Offene Blocker:\n\n${blocker.join("\n")}\n\nTrotzdem beanspruchen?`);

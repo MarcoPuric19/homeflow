@@ -60,6 +60,7 @@ func New(logger *slog.Logger, store *tickets.Store, run cluster.Runner, git repo
 	mux.HandleFunc("POST /api/tickets/{id}/type", s.typeTicket)
 	mux.HandleFunc("POST /api/tickets/{id}/epic", s.epicTicket)
 	mux.HandleFunc("POST /api/tickets/{id}/scope", s.scopeTicket)
+	mux.HandleFunc("POST /api/tickets/{id}/dod", s.dodTicket)
 	mux.HandleFunc("POST /api/tickets/{id}/relations", s.addRelation)
 	mux.HandleFunc("DELETE /api/tickets/{id}/relations", s.removeRelation)
 	mux.HandleFunc("GET /api/board", s.board)
@@ -232,6 +233,8 @@ func (s *Server) listTickets(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		felder["offene_blocker"] = blocker
+		felder["dod_punkte"] = ticket.DefinitionOfDone()
+		felder["offene_dod"] = ticket.OpenDoD()
 		angereichert = append(angereichert, felder)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tickets": angereichert})
@@ -259,6 +262,22 @@ func (s *Server) addRelation(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) removeRelation(w http.ResponseWriter, r *http.Request) {
 	s.relation(w, r, s.store.RemoveRelationBy)
+}
+
+// Die Punkte 1 und 6 kann das Cockpit selbst sehen und lehnt sie deshalb hier
+// ab: ein Haken, den ein Mensch auch von Hand setzen koennte, waere kein Beleg
+// mehr (MC-0027).
+func (s *Server) dodTicket(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Nr       int    `json:"nr"`
+		Erfuellt bool   `json:"erfuellt"`
+		Author   string `json:"author"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	ticket, err := s.store.SetDoDBy(r.PathValue("id"), input.Nr, input.Erfuellt, actorOf(r, input.Author))
+	s.respond(w, ticket, err, http.StatusOK)
 }
 
 func (s *Server) createTicket(w http.ResponseWriter, r *http.Request) {
