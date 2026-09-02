@@ -106,6 +106,9 @@ if [ -f "$SCHWAERZUNGEN" ]; then
   if [ "$anzahl" -gt 0 ]; then
     info "Wende $anzahl woertliche Schwaerzung(en) auf die Historie an ..."
     git filter-repo --quiet --force --replace-text "$regeln"
+    # --replace-text ersetzt nur Dateiinhalte. Commit-Nachrichten zitieren die
+    # Werte ebenfalls - im Probelauf ueberlebte "Naia" genau dort.
+    git filter-repo --quiet --force --replace-message "$regeln"
   fi
   rm -f "$regeln"
 else
@@ -128,7 +131,10 @@ fehler=0
 alle_dateien="$(git log --all --pretty=format: --name-only | sort -u | sed '/^$/d')"
 
 for p in "${AUSSCHLUSS[@]}"; do
-  if printf '%s\n' "$alle_dateien" | grep -qx -e "$p" || printf '%s\n' "$alle_dateien" | grep -q "^$p/"; then
+  # Gleiche SIGPIPE-Falle wie unten: -c statt -q.
+  n_datei="$(printf '%s\n' "$alle_dateien" | grep -cx -e "$p" || true)"
+  n_unter="$(printf '%s\n' "$alle_dateien" | grep -c "^$p/" || true)"
+  if [ "$n_datei" -gt 0 ] || [ "$n_unter" -gt 0 ]; then
     rot "  NOCH VORHANDEN in der Historie: $p"
     fehler=1
   else
@@ -140,7 +146,12 @@ if [ -f "$SCHWAERZUNGEN" ]; then
   grep -vE '^[[:space:]]*(#|$)' "$SCHWAERZUNGEN" | while IFS= read -r zeile; do
     original="${zeile%%==>*}"
     [ -z "$original" ] && continue
-    if git log --all -p 2>/dev/null | grep -qF -- "$original"; then
+    # grep -c statt grep -q: -q bricht beim ersten Treffer ab, git log stirbt an
+    # SIGPIPE (141), und pipefail reicht die 141 als Pipeline-Status durch. Das
+    # "if" liest das als "nicht gefunden" - die Pruefung meldete also genau dann
+    # sauber, wenn der Wert vorhanden war.
+    n="$(git log --all -p 2>/dev/null | grep -cF -- "$original" || true)"
+    if [ "$n" -gt 0 ]; then
       rot "  UEBERLEBT die Schwaerzung: $original"
       echo x >> "$ZIEL/.schwaerzung-fehler"
     fi
@@ -201,7 +212,7 @@ done
 # ist es nicht.
 adressen="$(printf '%s' "$verlauf" \
   | grep -ohE '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}' \
-  | grep -viE 'example|noreply|localhost|\.local|@AGENTS|@CLAUDE' \
+  | grep -viE 'example|noreply|localhost|\.local|@AGENTS|@CLAUDE|git@github' \
   | sort | uniq -c | sort -rn || true)"
 
 if [ -n "$adressen" ]; then

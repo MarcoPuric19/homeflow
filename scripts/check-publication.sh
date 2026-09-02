@@ -91,7 +91,7 @@ info "$(zaehle 'Codex') Fundstellen 'Codex'"
 info "$(git ls-files missioncontrol/tickets | wc -l | tr -d ' ') Ticketdateien"
 adressen="$(printf '%s' "$verlauf" \
   | grep -ohE '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}' \
-  | grep -viE 'example|noreply|localhost|\.local|@AGENTS|@CLAUDE' \
+  | grep -viE 'example|noreply|localhost|\.local|@AGENTS|@CLAUDE|git@github' \
   | sort -u | tr '\n' ' ' || true)"
 info "E-Mail-Adressen: ${adressen:-keine}"
 
