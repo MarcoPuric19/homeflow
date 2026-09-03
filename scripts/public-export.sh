@@ -24,6 +24,22 @@ AUSSCHLUSS=(
   "AGENTS.md"
   "CLAUDE.md"
   "Austausch.md"
+  # Umbenennungs-Rest vom 2026-09-02: die Mission-Control-Tickets MC-0023 bis
+  # MC-0027 trugen fuer genau einen Commit HF-Nummern, bevor sie zurueck ins
+  # MC-Projekt gingen. Die Auswahlregel filtert nach Pfadnamen - unter einem
+  # HF-Namen rutscht MC-Inhalt also durch, obwohl er nicht veroeffentlicht
+  # werden soll. Die Dateien existieren im Arbeitsbaum nicht mehr; ohne diese
+  # Zeilen stuenden sie trotzdem in der oeffentlichen Historie.
+  #
+  # 0146 und 0147 stehen bewusst NICHT hier: Codex hat die beiden Nummern
+  # inzwischen fuer echte F6-Tickets vergeben. Seine Fassungen sind derzeit noch
+  # nicht committet, ein Ausschluss waere also eine Falle, die genau dann
+  # zuschlaegt, wenn er es tut. Ihre alten Fassungen bleiben damit in der
+  # Historie - zwei Entwurfstexte zu Mission Control, ohne personenbezogene
+  # Daten, in Dateien die im aktuellen Stand nicht existieren.
+  "missioncontrol/tickets/HF-0148.md"
+  "missioncontrol/tickets/HF-0149.md"
+  "missioncontrol/tickets/HF-0150.md"
 )
 
 # Tickets: veroeffentlicht wird erst ab F6 (Epic HF-0114, die Haustierakte).
